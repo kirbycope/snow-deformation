@@ -1,5 +1,6 @@
 # Copyright (c) 2026 Antigravity Contributors
 # SPDX-License-Identifier: MIT
+@tool
 @icon("res://addons/snow_deformation/assets/icons/snow_deformation_icon.svg")
 class_name SnowDeformation
 extends Node3D
@@ -66,11 +67,17 @@ const _BAKE_BUDGET_USEC: int = 2000
 ## fixed deformation texture covers all of it, [member map_resolution] texels a side, and every stamp is written into it
 ## as well, so a trail is still there seen from across the map. The window above is only a sharper layer of detail
 ## that follows the focus; the snow itself stays where it is. Left empty, only the window keeps tracks.
-@export var map_rect: Rect2 = Rect2()
+@export var map_rect: Rect2 = Rect2():
+	set(value):
+		map_rect = value
+		_refresh_preview()
 ## Texels along each side of the map's deformation texture. 2048 over a 512 m map is 25 cm a texel and 32 MB.
 @export_enum("1024:1024", "2048:2048", "4096:4096") var map_resolution: int = 2048
 ## Spacing of the ground heights baked under the whole map, once, as the level loads.
-@export_range(0.5, 8.0, 0.5, "suffix:m") var map_ground_cell: float = 2.0
+@export_range(0.5, 8.0, 0.5, "suffix:m") var map_ground_cell: float = 2.0:
+	set(value):
+		map_ground_cell = value
+		_refresh_preview()
 
 @export_group("Snow")
 ## Undeformed snow thickness in metres. A stamp can never dig deeper than this.
@@ -81,7 +88,10 @@ const _BAKE_BUDGET_USEC: int = 2000
 ## Ceiling on the berm a stamp may raise, in metres.
 @export_range(0.0, 1.0, 0.01) var max_rim_height: float = 0.12
 ## Where the ground under the snow is. Left empty, a flat provider at y = 0 is used.
-@export var terrain_height_provider: SnowTerrainHeight = null
+@export var terrain_height_provider: SnowTerrainHeight = null:
+	set(value):
+		terrain_height_provider = value
+		_refresh_preview()
 
 @export_group("Refill")
 ## Metres per second that depressions and berms recover. 0 keeps tracks indefinitely.
@@ -99,19 +109,34 @@ const _BAKE_BUDGET_USEC: int = 2000
 
 @export_group("Surface mesh")
 ## Build and follow a snow surface mesh. Turn this off to drive an existing mesh's material instead.
-@export var create_surface: bool = true
+@export var create_surface: bool = true:
+	set(value):
+		create_surface = value
+		_refresh_preview()
 ## How many metres across the snow mesh's fine centre is. Smaller than [member world_size], so tracks survive
 ## leaving it and are still there on the way back.
-@export_range(4.0, 128.0, 1.0) var surface_size: float = 32.0
+@export_range(4.0, 128.0, 1.0) var surface_size: float = 32.0:
+	set(value):
+		surface_size = value
+		_refresh_preview()
 ## Rings of coarser mesh round the fine centre, each twice as wide as the one inside it with its vertices twice as far
 ## apart, so the snow reaches far off for few more vertices: five take a 32 m centre to a kilometre. The mesh follows
 ## the focus in steps of its coarsest spacing, so no vertex ever swims. 0 is the fine centre alone.
-@export_range(0, 8, 1) var surface_rings: int = 0
+@export_range(0, 8, 1) var surface_rings: int = 0:
+	set(value):
+		surface_rings = value
+		_refresh_preview()
 ## Metres over which the snow thins to nothing at the mesh's edge, so it meets the ground beyond at ground level
 ## rather than standing proud of it as a ledge.
-@export_range(0.0, 16.0, 0.5, "suffix:m") var surface_edge_taper: float = 4.0
+@export_range(0.0, 16.0, 0.5, "suffix:m") var surface_edge_taper: float = 4.0:
+	set(value):
+		surface_edge_taper = value
+		_refresh_preview()
 ## Quads along each side of the snow mesh's centre, and of each ring. 256 over 32 m is a vertex every 12.5 cm.
-@export_range(16, 512, 16) var surface_subdivisions: int = 256
+@export_range(16, 512, 16) var surface_subdivisions: int = 256:
+	set(value):
+		surface_subdivisions = value
+		_refresh_preview()
 
 @export_group("Bodies")
 ## Let physics bodies moving through the snow press it, the same way a [GrassField] is pressed: a
@@ -151,7 +176,10 @@ const _BAKE_BUDGET_USEC: int = 2000
 ## [member terrain_height_provider] under the window at this spacing and hands the shader the result, so the snow
 ## follows any terrain that provider can see: a [SnowTerrainHeightRaycast] sees anything with collision, which is
 ## how HTerrain, Terrain3D and MTerrain all work. A flat provider skips this entirely.
-@export_range(0.1, 4.0, 0.05, "suffix:m") var ground_cell: float = 0.5
+@export_range(0.1, 4.0, 0.05, "suffix:m") var ground_cell: float = 0.5:
+	set(value):
+		ground_cell = value
+		_refresh_preview()
 
 @export_group("Kicked snow")
 ## Throw clumps of snow forward from feet moving through it (see [method kick]).
@@ -225,6 +253,13 @@ var _spray: Node3D = null
 var _kicks: Array[GPUParticles3D] = []
 var _next_kick: int = 0
 var _floor_shape: HeightMapShape3D = null
+## How deep the snow has been dug out at each floor sample, by world sample, so the floor lies in the trench and a
+## snowball resting there drops into it. Kept by world position, so a trench is still there when the floor comes back.
+var _dug: Dictionary[Vector2i, float] = {}
+## The floor's heights as laid, before digging, and as they are now; the second goes to the shape when it changes.
+var _floor_base: PackedFloat32Array = PackedFloat32Array()
+var _floor_heights: PackedFloat32Array = PackedFloat32Array()
+var _floor_dirty: bool = false
 var _floor_centre: Vector2 = Vector2(INF, INF)
 ## Bodies currently inside the press area, and the radius and underside each one was measured at.
 var _pressers: Array[Node3D] = []
@@ -283,6 +318,7 @@ func _ready() -> void:
 	_map_texture = Texture2DRD.new()
 
 	if Engine.is_editor_hint():
+		_rebuild_preview()
 		return
 
 	_resolve_focus()
@@ -324,6 +360,7 @@ func _exit_tree() -> void:
 
 func _process(delta: float) -> void:
 	if Engine.is_editor_hint():
+		_follow_preview()
 		return
 	if _focus == null or not is_instance_valid(_focus):
 		_resolve_focus()
@@ -486,7 +523,12 @@ static func _shape_extent(shape: Shape3D) -> Vector2:
 ## Presses every tracked body that is actually in the snow. On the physics clock, because that is when
 ## a body has finished moving for the frame.
 func _physics_process(delta: float) -> void:
-	if Engine.is_editor_hint() or not press_bodies or _pressers.is_empty():
+	if Engine.is_editor_hint():
+		return
+	if _floor_dirty and _floor_shape != null:
+		_floor_dirty = false
+		_floor_shape.map_data = _floor_heights
+	if not press_bodies or _pressers.is_empty():
 		return
 	_pressers = _pressers.filter(is_instance_valid)
 	if _pressers.size() > max_pressed_bodies:
@@ -528,7 +570,7 @@ func _press_body(body: Node3D) -> bool:
 		var count: int = clampi(ceili(travel / maxf(radius * 0.5, 0.005)), 1, MAX_SWEEP_STEPS)
 		for i: int in range(1, count + 1):
 			var t: float = float(i) / float(count)
-			if press_segment((was["a"] as Vector3).lerp(seg["a"], t), (was["b"] as Vector3).lerp(seg["b"], t), radius):
+			if press_segment((was["a"] as Vector3).lerp(seg["a"], t), (was["b"] as Vector3).lerp(seg["b"], t), radius, 0.35, 0.25, not _rides_floor(body)):
 				cut = true
 	return cut
 
@@ -536,7 +578,14 @@ func _press_body(body: Node3D) -> bool:
 ## Presses the part of a segment [param radius] thick, from [param a] to [param b], that is under the
 ## snow. One end above the surface is moved to where the segment crosses it, so a blade dipped into the
 ## snow cuts only as far as it went in rather than a trench stretched up to the hilt.
-func press_segment(a: Vector3, b: Vector3, radius: float, rim_factor: float = 0.35, wall_softness: float = 0.25) -> bool:
+## True for a body that rides on the packed floor (a snowball, a sled): what it presses does not dig the floor out
+## from under itself, or it would sink through its own track.
+func _rides_floor(body: Node3D) -> bool:
+	return body is CollisionObject3D and ((body as CollisionObject3D).collision_mask & floor_layer) != 0
+
+
+## [param digs_floor] false leaves the packed floor where it is: the pressing is only seen, not stood in.
+func press_segment(a: Vector3, b: Vector3, radius: float, rim_factor: float = 0.35, wall_softness: float = 0.25, digs_floor: bool = true) -> bool:
 	var low_a: Vector3 = a - Vector3(0.0, radius, 0.0)
 	var low_b: Vector3 = b - Vector3(0.0, radius, 0.0)
 	var depth_a: float = get_undeformed_surface_height(Vector2(low_a.x, low_a.z)) - low_a.y
@@ -551,7 +600,7 @@ func press_segment(a: Vector3, b: Vector3, radius: float, rim_factor: float = 0.
 		else:
 			low_a = at
 			depth_a = 0.0
-	add_capsule(low_a, low_b, radius, clampf(depth_a, 0.0, snow_depth), clampf(depth_b, 0.0, snow_depth), rim_factor, wall_softness)
+	add_capsule(low_a, low_b, radius, clampf(depth_a, 0.0, snow_depth), clampf(depth_b, 0.0, snow_depth), rim_factor, wall_softness, 0.4, digs_floor)
 	return true
 
 
@@ -669,13 +718,13 @@ func _press_weight(body: Node3D) -> float:
 
 ## Queue an elliptical footprint centred on [param pos], [param yaw] radians about +Y. [param depth]
 ## is the heel depth in metres; the toe is shallower, which is what makes a print read as a footfall.
-func add_footprint(pos: Vector3, yaw: float, half_width: float, half_length: float, depth: float, rim_factor: float = 0.35, wall_softness: float = 0.25, rim_width: float = 0.4) -> void:
-	_push(_pack(SHAPE_ELLIPSE, pos, pos, half_width, half_length, yaw, rim_factor, depth, depth * 0.7, wall_softness, rim_width))
+func add_footprint(pos: Vector3, yaw: float, half_width: float, half_length: float, depth: float, rim_factor: float = 0.35, wall_softness: float = 0.25, rim_width: float = 0.4, digs_floor: bool = true) -> void:
+	_push(_pack(SHAPE_ELLIPSE, pos, pos, half_width, half_length, yaw, rim_factor, depth, depth * 0.7, wall_softness, rim_width), digs_floor)
 
 
 ## Queue a capsule from [param a] to [param b]: a drag mark, or any body wading through.
-func add_capsule(a: Vector3, b: Vector3, radius: float, depth_a: float, depth_b: float, rim_factor: float = 0.35, wall_softness: float = 0.25, rim_width: float = 0.4) -> void:
-	_push(_pack(SHAPE_CAPSULE, a, b, radius, radius, 0.0, rim_factor, depth_a, depth_b, wall_softness, rim_width))
+func add_capsule(a: Vector3, b: Vector3, radius: float, depth_a: float, depth_b: float, rim_factor: float = 0.35, wall_softness: float = 0.25, rim_width: float = 0.4, digs_floor: bool = true) -> void:
+	_push(_pack(SHAPE_CAPSULE, a, b, radius, radius, 0.0, rim_factor, depth_a, depth_b, wall_softness, rim_width), digs_floor)
 
 
 ## Queue a round depression. A capsule whose ends coincide.
@@ -698,6 +747,9 @@ func get_terrain_height(xz: Vector2) -> float:
 ## Wipe every track. Also resets [member dropped_stamps].
 func clear() -> void:
 	dropped_stamps = 0
+	_dug.clear()
+	if _floor_shape != null and _floor_base.size() == _floor_shape.map_width * _floor_shape.map_depth:
+		_lay_floor(_floor_base.duplicate())
 	_stamps.clear()
 	stamps_this_frame = 0
 	if _compute_ready:
@@ -788,9 +840,11 @@ func _map_region(count: int, decay_dt: float) -> Rect2i:
 	return Rect2i(lo, hi - lo)
 
 
-func _push(stamp: PackedFloat32Array) -> void:
+func _push(stamp: PackedFloat32Array, digs_floor: bool = true) -> void:
 	stamps_this_frame += 1
 	stamps_total += 1
+	if digs_floor:
+		_dig(stamp)
 	if not enabled:
 		return
 	if _stamps.size() / STAMP_FLOATS >= max_stamps_per_frame:
@@ -1149,8 +1203,8 @@ func _follow_floor() -> void:
 	for z: int in side:
 		for x: int in side:
 			var at: Vector2 = centre + Vector2(float(x) - half, float(z) - half) * floor_cell
-			heights[z * side + x] = get_floor_height(at)
-	_floor_shape.map_data = heights
+			heights[z * side + x] = get_undeformed_surface_height(at) - floor_sink
+	_lay_floor(heights)
 	_floor.global_position = Vector3(centre.x, 0.0, centre.y)
 
 
@@ -1180,14 +1234,80 @@ func _floor_from_bake(job: Dictionary) -> void:
 			var bottom: float = lerpf(image.get_pixel(i.x, i.y + 1).r, image.get_pixel(i.x + 1, i.y + 1).r, f.x)
 			heights[z * side + x] = lerpf(top, bottom, f.y) + lift
 	_floor_centre = centre
-	_floor_shape.map_data = heights
+	_lay_floor(heights)
 	_floor.global_position = Vector3(centre.x, 0.0, centre.y)
+
+
+## Hands [param heights] (the floor as laid over undisturbed snow) to the shape, lowered wherever the snow was dug.
+func _lay_floor(heights: PackedFloat32Array) -> void:
+	_floor_base = heights.duplicate()
+	var side: int = _floor_shape.map_width
+	var first: Vector2i = _floor_first_sample()
+	for key: Vector2i in _dug:
+		var at: Vector2i = key - first
+		if at.x >= 0 and at.y >= 0 and at.x < side and at.y < side:
+			heights[at.y * side + at.x] = _floor_base[at.y * side + at.x] - maxf(_dug[key] - floor_sink, 0.0)
+	_floor_heights = heights
+	_floor_shape.map_data = heights
+	_floor_dirty = false
+
+
+## The world sample (in units of [member floor_cell]) of the floor's first corner.
+func _floor_first_sample() -> Vector2i:
+	var half: int = (_floor_shape.map_width - 1) / 2
+	return Vector2i(roundi(_floor_centre.x / floor_cell), roundi(_floor_centre.y / floor_cell)) - Vector2i(half, half)
+
+
+## Records how deep [param stamp] dug the snow at the floor samples it covers, and lowers the floor there: a trench
+## ploughed under a stacked snowball lets it drop in and the stack come down. A sample within half a cell of the print
+## counts, since the floor's samples are a metre apart and a print is narrower.
+func _dig(stamp: PackedFloat32Array) -> void:
+	if _floor == null or floor_cell <= 0.0:
+		return
+	var a: Vector2 = Vector2(stamp[0], stamp[2])
+	var b: Vector2 = Vector2(stamp[4], stamp[6])
+	var ab: Vector2 = b - a
+	var reach: float = maxf(stamp[8], stamp[9]) + floor_cell * 0.5
+	var lo: Vector2i = Vector2i(((a.min(b) - Vector2(reach, reach)) / floor_cell).ceil())
+	var hi: Vector2i = Vector2i(((a.max(b) + Vector2(reach, reach)) / floor_cell).floor())
+	var side: int = _floor_shape.map_width if _floor_shape else 0
+	var first: Vector2i = _floor_first_sample() if _floor_shape else Vector2i.ZERO
+	for z: int in range(lo.y, hi.y + 1):
+		for x: int in range(lo.x, hi.x + 1):
+			var p: Vector2 = Vector2(x, z) * floor_cell
+			var t: float = clampf((p - a).dot(ab) / ab.length_squared(), 0.0, 1.0) if ab.length_squared() > 1e-8 else 0.0
+			if p.distance_to(a + ab * t) > reach:
+				continue
+			var key: Vector2i = Vector2i(x, z)
+			var depth: float = lerpf(stamp[12], stamp[13], t)
+			if depth <= _dug.get(key, 0.0):
+				continue
+			_dug[key] = depth
+			var at: Vector2i = key - first
+			if side > 0 and at.x >= 0 and at.y >= 0 and at.x < side and at.y < side and _floor_base.size() == side * side:
+				_floor_heights[at.y * side + at.x] = _floor_base[at.y * side + at.x] - maxf(depth - floor_sink, 0.0)
+				_floor_dirty = true
+
+
+## How deep the snow has been dug at [param xz], between the floor samples round it.
+func dug_depth(xz: Vector2) -> float:
+	if _dug.is_empty() or floor_cell <= 0.0:
+		return 0.0
+	var g: Vector2 = xz / floor_cell
+	var i: Vector2i = Vector2i(g.floor())
+	var f: Vector2 = g - Vector2(i)
+	var top: float = lerpf(_dug.get(i, 0.0), _dug.get(i + Vector2i(1, 0), 0.0), f.x)
+	var bottom: float = lerpf(_dug.get(i + Vector2i(0, 1), 0.0), _dug.get(i + Vector2i(1, 1), 0.0), f.x)
+	return lerpf(top, bottom, f.y)
 
 
 ## Everything that depends on the depth, when it changes on a live node: the globals every material reads, the
 ## floor, the surface mesh's bounds, and the tracks, which were carved into snow of another depth.
 func _on_depth_changed() -> void:
-	if not is_inside_tree() or Engine.is_editor_hint():
+	if not is_inside_tree():
+		return
+	if Engine.is_editor_hint():
+		_refresh_preview()
 		return
 	_publish_globals()
 	_floor_centre = Vector2(INF, INF)
@@ -1198,9 +1318,10 @@ func _on_depth_changed() -> void:
 	clear()
 
 
-## Height of the packed snow floor at [param xz]: the undisturbed surface less [member floor_sink].
+## Height of the packed snow floor at [param xz]: the undisturbed surface less [member floor_sink], or less as much as
+## was dug out there when that is deeper.
 func get_floor_height(xz: Vector2) -> float:
-	return get_undeformed_surface_height(xz) - floor_sink
+	return get_undeformed_surface_height(xz) - maxf(floor_sink, dug_depth(xz))
 
 
 ## True for the floor collider, so a body can tell it is riding on the snow from what it touches.
@@ -1223,6 +1344,70 @@ func floor_covers(xz: Vector2) -> bool:
 func set_wind(strength: float, direction: Vector3) -> void:
 	var flat: Vector3 = Vector3(direction.x, 0.0, direction.z)
 	wind = flat.normalized() * strength * wind_scale if not flat.is_zero_approx() else Vector3.ZERO
+
+#endregion
+
+#region Editor preview
+# In the editor the snow is drawn where it will lie, undisturbed, so a level can be built to it rather than guessed at:
+# the surface mesh and its rings, laid over the ground under the editor's camera and, with a map, under the whole map.
+# Nothing else runs there (no compute passes, no floor, no pressing), and nothing it adds is saved with the scene.
+
+var _preview_queued: bool = false
+
+
+## Rebuilds the preview once, at the end of the frame, after an export that changes it was set in the inspector.
+func _refresh_preview() -> void:
+	if Engine.is_editor_hint() and is_inside_tree() and not _preview_queued:
+		_preview_queued = true
+		_rebuild_preview.call_deferred()
+
+
+func _rebuild_preview() -> void:
+	_preview_queued = false
+	for old: Node in [_surface, _rings]:
+		if old != null and is_instance_valid(old):
+			old.queue_free()
+	_surface = null
+	_rings = null
+	_surface_material = null
+	_ground_texture = null
+	_ground_centre = Vector2(INF, INF)
+	_map_low = INF
+	_map_high = -INF
+	_bake = {}
+	_provider = terrain_height_provider if terrain_height_provider != null else SnowTerrainHeightFlat.new()
+	_provider.setup(get_world_3d())
+	_texel_size = world_size / float(resolution)
+	_focus = _editor_camera()
+	if create_surface:
+		_build_surface()
+		_bake_map_ground()
+	_snap_origin(true)
+	_publish_globals()
+
+
+## The surface follows the editor's camera as it would the Player.
+func _follow_preview() -> void:
+	var camera: Node3D = _editor_camera()
+	if camera != null:
+		_focus = camera
+	if _surface == null or not is_instance_valid(_surface):
+		return
+	if _snap_origin(false):
+		_publish_globals()
+	_follow_surface()
+	_follow_ground()
+	_step_bake()
+
+
+## The camera of the editor's first 3D viewport, or null outside the editor. Reached through the engine's singleton
+## list, so the script still compiles in an exported game, which has no editor classes.
+func _editor_camera() -> Node3D:
+	if not Engine.has_singleton(&"EditorInterface"):
+		return null
+	var editor: Object = Engine.get_singleton(&"EditorInterface")
+	var viewport: Object = editor.call(&"get_editor_viewport_3d", 0)
+	return viewport.call(&"get_camera_3d") as Node3D if viewport != null else null
 
 #endregion
 

@@ -19,10 +19,10 @@ class RecordingSnow:
 	func kick(at: Vector3, velocity: Vector3, clumps: int) -> void:
 		kicks.append({"at": at, "velocity": velocity, "clumps": clumps})
 
-	func add_footprint(pos: Vector3, yaw: float, half_width: float, half_length: float, depth: float, rim_factor: float = 0.35, wall_softness: float = 0.25, rim_width: float = 0.4) -> void:
+	func add_footprint(pos: Vector3, yaw: float, half_width: float, half_length: float, depth: float, rim_factor: float = 0.35, wall_softness: float = 0.25, rim_width: float = 0.4, digs_floor: bool = true) -> void:
 		footprints.append({"pos": pos, "yaw": yaw, "half_width": half_width, "half_length": half_length, "depth": depth})
 
-	func add_capsule(a: Vector3, b: Vector3, radius: float, depth_a: float, depth_b: float, rim_factor: float = 0.35, wall_softness: float = 0.25, rim_width: float = 0.4) -> void:
+	func add_capsule(a: Vector3, b: Vector3, radius: float, depth_a: float, depth_b: float, rim_factor: float = 0.35, wall_softness: float = 0.25, rim_width: float = 0.4, digs_floor: bool = true) -> void:
 		capsules.append({"a": a, "b": b, "radius": radius, "depth_a": depth_a, "depth_b": depth_b, "wall_softness": wall_softness})
 
 

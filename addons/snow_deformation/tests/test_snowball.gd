@@ -174,3 +174,87 @@ func test_a_big_ball_settles_into_the_snow() -> void:
 	await wait_seconds(1.5)
 	assert_almost_eq(ball.sink, 0.1, 0.01, "It sinks a quarter of its radius")
 	assert_almost_eq(ball.global_position.y - ball.radius, top - ball.sink, 0.02, "and its underside is that far under the floor")
+
+
+func test_ploughing_the_snow_lowers_the_floor_but_a_ball_does_not_dig_its_own() -> void:
+	await wait_physics_frames(2)
+	var top: float = _snow.get_floor_height(Vector2.ZERO)
+	_snow.add_capsule(Vector3(-1.0, 0.0, 0.0), Vector3(1.0, 0.0, 0.0), 0.3, 0.3, 0.3, 0.35, 0.25, 0.4, false)
+	assert_almost_eq(_snow.get_floor_height(Vector2.ZERO), top, 0.001, "A body riding the floor presses the snow without digging the floor out from under itself")
+	_snow.add_capsule(Vector3(-1.0, 0.0, 0.0), Vector3(1.0, 0.0, 0.0), 0.3, 0.3, 0.3)
+	assert_almost_eq(_snow.get_floor_height(Vector2.ZERO), top - (0.3 - _snow.floor_sink), 0.001, "Anything else ploughs it out, and the floor lies in the trench")
+	await wait_physics_frames(2)
+	var floor_shape: HeightMapShape3D = (_snow.get_node("SnowFloor").get_child(0) as CollisionShape3D).shape
+	var middle: int = (floor_shape.map_width - 1) / 2
+	assert_almost_eq(floor_shape.map_data[middle * floor_shape.map_width + middle], _snow.get_floor_height(Vector2.ZERO), 0.001, "The collider itself drops there")
+
+
+## A snowman's base with a head on it, settled and holding.
+func _stack() -> Array[Snowball]:
+	await wait_physics_frames(2)
+	var top: float = _snow.get_floor_height(Vector2.ZERO)
+	var base: Snowball = _ball()
+	base.radius = 0.3
+	base.break_speed = 0.0
+	base.global_position = Vector3(0.0, top + 0.3, 0.0)
+	var head: Snowball = _ball()
+	head.radius = 0.2
+	head.break_speed = 0.0
+	head.global_position = Vector3(0.0, top + 0.3 + 0.3 + 0.2 - 0.02, 0.0)
+	await wait_seconds(1.0)
+	return [base, head]
+
+
+func test_a_stack_comes_down_when_the_snow_is_ploughed_from_under_it() -> void:
+	var stack: Array[Snowball] = await _stack()
+	var head: Snowball = stack[1]
+	assert_true(head.lock_rotation, "Set on the base, the head holds")
+	var height: float = head.global_position.y
+	# A trench ploughed along one side of the base: its floor drops and tilts, and the base goes in
+	_snow.add_capsule(Vector3(-1.5, 0.0, 0.5), Vector3(1.5, 0.0, 0.5), 0.6, 0.35, 0.35)
+	await wait_seconds(3.0)
+	assert_lt(head.global_position.y, height - 0.15, "The head comes down with it")
+
+
+func test_something_else_knocks_a_stack_loose_and_a_slow_touch_does_not() -> void:
+	var stack: Array[Snowball] = await _stack()
+	var base: Snowball = stack[0]
+	var head: Snowball = stack[1]
+	var leaning: RigidBody3D = autofree(RigidBody3D.new())
+	leaning.linear_velocity = Vector3(0.1, 0.0, 0.0)
+	base.call("_on_body_entered", leaning)
+	assert_true(head.lock_rotation, "Something barely moving leaves it standing")
+	var kick: RigidBody3D = autofree(RigidBody3D.new())
+	kick.linear_velocity = Vector3(2.0, 0.0, 0.0)
+	base.call("_on_body_entered", kick)
+	assert_false(base.lock_rotation, "A kick knocks the base loose")
+	assert_false(head.lock_rotation, "and the head on it, so the stack can topple")
+	var wall: StaticBody3D = autofree(StaticBody3D.new())
+	var other: Snowball = _ball()
+	other.call("_on_body_entered", wall)
+	assert_eq(other._free_until, 0.0, "Ground and walls knock nothing")
+
+
+func test_a_hard_landing_breaks_it_into_clumps_and_a_gentle_one_does_not() -> void:
+	await wait_physics_frames(2)
+	var top: float = _snow.get_floor_height(Vector2.ZERO)
+	var gentle: Snowball = _ball()
+	gentle.global_position = Vector3(-3.0, top + gentle.radius + 0.03, 0.0)
+	var dropped: Snowball = _ball()
+	dropped.radius = 0.2
+	dropped.global_position = Vector3(3.0, top + 2.5, 0.0)
+	var broke: Array[bool] = []
+	dropped.shattered.connect(broke.append.bind(true))
+	await wait_seconds(1.5)
+	assert_true(is_instance_valid(gentle), "Set down gently it stays whole")
+	assert_eq(broke, [true], "Dropped two metres it falls apart")
+	assert_false(is_instance_valid(dropped), "and is gone")
+	var clumps: int = 0
+	for child: Node in get_children():
+		if child.name.begins_with("SnowClump"):
+			clumps += 1
+			assert_eq((child as RigidBody3D).collision_layer, 0, "Clumps trip nobody")
+	assert_between(clumps, 4, 14, "leaving clumps of it in the snow")
+	for child: Node in get_children():
+		if child.name.begins_with("SnowClump"):
+			child.free()

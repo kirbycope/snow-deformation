@@ -1,5 +1,6 @@
 # Copyright (c) 2026 Antigravity Contributors
 # SPDX-License-Identifier: MIT
+@tool
 class_name SnowTerrainHeightFlat
 extends SnowTerrainHeight
 ## Ground at one constant height. The default, and all a flat demo needs.

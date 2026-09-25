@@ -1,5 +1,6 @@
 # Copyright (c) 2026 Antigravity Contributors
 # SPDX-License-Identifier: MIT
+@tool
 class_name SnowTerrainHeight
 extends Resource
 ## Where the ground under the snow is, on the CPU.

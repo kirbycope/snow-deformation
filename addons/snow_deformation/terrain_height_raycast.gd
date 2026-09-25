@@ -1,5 +1,6 @@
 # Copyright (c) 2026 Antigravity Contributors
 # SPDX-License-Identifier: MIT
+@tool
 class_name SnowTerrainHeightRaycast
 extends SnowTerrainHeight
 ## Ground found by casting straight down against physics.

@@ -29,6 +29,13 @@ extends RigidBody3D
 ## A ball that finds itself under the floor, placed in the snow or left beyond the floor until the focus
 ## came near, is lifted back on top of it.
 ##
+## A stack holds only until something disturbs it. Anything but another snowball moving into a ball faster than
+## [member knock_speed] knocks it loose, and a ball in a stack that starts to move (the snow ploughed out from under
+## the bottom one, which drops the floor it stands on) is knocked loose too; either frees the whole stack to roll for
+## [member knocked_time], so it topples as it would. A ball that lands or is struck harder than [member break_speed]
+## falls apart ([method shatter]): clumps of it scatter and lie in the snow for [member clump_life] seconds, and the
+## authority tells every peer, so it breaks everywhere.
+##
 ## Everything but the growth runs on every peer. The growth runs on the body's multiplayer authority,
 ## and [member radius] is the one property a synchronizer needs to carry for the others to match.
 
@@ -44,6 +51,16 @@ extends RigidBody3D
 ## Snow's rolling resistance: the ball loses this times gravity in speed every second it rolls on snow,
 ## so one let go of stops within a few metres instead of rolling on across the whole field.
 @export_range(0.0, 1.0, 0.01) var rolling_resistance: float = 0.25
+## How fast anything but another snowball has to be moving into a ball to knock it loose from a stack.
+@export_range(0.0, 5.0, 0.05, "suffix:m/s") var knock_speed: float = 0.5
+## A ball held in a stack that starts moving faster than this has lost what it stood on, so it is knocked loose.
+@export_range(0.0, 5.0, 0.05, "suffix:m/s") var hold_speed: float = 0.5
+## Seconds a knocked ball is free to roll before it may hold on another again.
+@export_range(0.0, 5.0, 0.1, "suffix:s") var knocked_time: float = 1.5
+## A landing or a blow that changes its speed by this much in one physics step breaks it apart. 0 never breaks.
+@export_range(0.0, 20.0, 0.1, "suffix:m/s") var break_speed: float = 3.0
+## Seconds the clumps of a broken ball lie in the snow before they melt away.
+@export_range(1.0, 120.0, 1.0, "suffix:s") var clump_life: float = 20.0
 ## Packed snow, in kilograms per cubic metre. The mass is this times the ball's volume.
 @export_range(50.0, 900.0, 10.0, "suffix:kg/m3") var density: float = 250.0
 ## What the snow bears before it gives way, in pascals. A ball sinks until its footprint carries its weight:
@@ -58,6 +75,15 @@ const SINK_RATE: float = 0.25 ## Metres per second a ball settles in, or comes b
 
 ## How far the ball has sunk into the snow, in metres.
 var sink: float = 0.0
+
+signal shattered ## It fell apart ([method shatter]), on every peer, just before it goes.
+
+## Until when (engine seconds) it is free to roll rather than hold on another snowball.
+var _free_until: float = 0.0
+## When it last began holding on another snowball; a ball still settling onto one is not yet knocked by moving.
+var _held_since: float = 0.0
+var _last_velocity: Vector3 = Vector3.ZERO
+var _was_frozen: bool = true
 
 var _snow: SnowDeformation = null
 ## True while the ball is resting on the snow, which is the only time it picks any up.
@@ -153,9 +179,16 @@ func _physics_process(delta: float) -> void:
 	# The collider's underside rides sink higher than the ball's, whichever way up the ball has rolled.
 	if _shape and (sink > 0.0 or _shape.position != Vector3.ZERO):
 		_shape.position = global_basis.orthonormalized().inverse() * Vector3(0.0, sink * 0.5, 0.0)
-	# Sunk, it ploughs a trench to its own underside, deeper than the collider riding on the floor reaches.
+	# Sunk, it ploughs a trench to its own underside, deeper than the collider riding on the floor reaches. It does not
+	# dig the floor, or it would sink through its own track.
 	if sink > 0.0 and rolled > 0.0 and _snow != null and is_instance_valid(_snow):
-		_snow.press_segment(global_position - linear_velocity * delta, global_position, radius)
+		_snow.press_segment(global_position - linear_velocity * delta, global_position, radius, 0.35, 0.25, false)
+	if freeze:
+		_was_frozen = true
+	# Held in a stack and moving: what it stood on has gone, so the stack comes down.
+	if lock_rotation and _now() - _held_since > 0.3 and linear_velocity.length() > hold_speed:
+		knock()
+	_hold_still()
 	# Only the authority grows it; the others take the radius from it. A held ball is frozen and grows nothing.
 	if _on_snow and not freeze and radius < max_radius and is_multiplayer_authority():
 		var before: float = mass
@@ -170,6 +203,13 @@ func _integrate_forces(state: PhysicsDirectBodyState3D) -> void:
 	if Engine.is_editor_hint():
 		return
 	_on_snow = false
+	# A landing or a blow shows as the speed changing sharply between two steps while touching something.
+	if break_speed > 0.0 and not _was_frozen and state.get_contact_count() > 0 and is_multiplayer_authority() \
+			and (state.linear_velocity - _last_velocity).length() >= break_speed:
+		shatter.rpc()
+		return
+	_last_velocity = state.linear_velocity
+	_was_frozen = false
 	if _snow == null or not is_instance_valid(_snow):
 		return
 	for i: int in state.get_contact_count():
@@ -215,9 +255,12 @@ func is_stacked() -> bool:
 
 
 func _on_body_entered(body: Node) -> void:
-	if body is Snowball and not _touching.has(body):
-		_touching.append(body as Snowball)
+	if body is Snowball:
+		if not _touching.has(body):
+			_touching.append(body as Snowball)
 		_hold_still()
+	elif SnowDeformation._moves(body) and _speed_of(body) >= knock_speed:
+		knock()
 
 
 func _on_body_exited(body: Node) -> void:
@@ -226,10 +269,93 @@ func _on_body_exited(body: Node) -> void:
 		_hold_still()
 
 
-## Locks the ball's rotation while it touches another snowball, so the two hold together on friction the
-## way packed snow does, and frees it once they part. Zeroing the spin each step is not enough: the contact
-## solver runs after, and puts the roll straight back.
+## How fast [param body] is moving; something that carries no velocity of its own (a swung sword's body) counts as
+## fast, since it only moves when something swings it.
+static func _speed_of(body: Node) -> float:
+	if body is RigidBody3D:
+		return (body as RigidBody3D).linear_velocity.length()
+	if body is CharacterBody3D:
+		return (body as CharacterBody3D).velocity.length()
+	return INF
+
+
+static func _now() -> float:
+	return Time.get_ticks_msec() / 1000.0
+
+
+## Frees it to roll for [member knocked_time], and every snowball it is stacked with too, so the stack comes down.
+func knock() -> void:
+	_free_until = _now() + knocked_time
+	_hold_still()
+	for other: Snowball in _touching:
+		if is_instance_valid(other) and other._free_until < _free_until - 0.01:
+			other.knock()
+
+
+## Locks the ball's rotation while it touches another snowball and has not been knocked, so the two hold together on
+## friction the way packed snow does, and frees it once they part. Zeroing the spin each step is not enough: the
+## contact solver runs after, and puts the roll straight back.
 func _hold_still() -> void:
-	lock_rotation = not _touching.is_empty()
-	if lock_rotation:
+	var hold: bool = not _touching.is_empty() and _now() >= _free_until
+	if hold == lock_rotation:
+		return
+	lock_rotation = hold
+	if hold:
+		_held_since = _now()
 		angular_velocity = Vector3.ZERO
+
+
+## Breaks it apart where it is, on every peer (the authority calls it as an RPC): clumps scatter from it and lie in the
+## snow a while, a spray of snow is thrown up, and the ball is gone.
+@rpc("authority", "call_local", "reliable")
+func shatter() -> void:
+	if is_queued_for_deletion():
+		return
+	_scatter_clumps()
+	if _snow != null and is_instance_valid(_snow):
+		_snow.kick(global_position, linear_velocity * 0.5 + Vector3.UP * 1.5, 10)
+	shattered.emit()
+	queue_free()
+
+
+## The clumps of a broken ball: a handful of lumps holding about half its snow between them, the rest thrown up as
+## powder. Plain rigid bodies on the same layers it rode on, so they lie on the snow; no layer of their own, so nothing
+## trips on them. They shrink away after [member clump_life].
+func _scatter_clumps() -> void:
+	var parent: Node = get_parent()
+	if parent == null:
+		return
+	var count: int = clampi(roundi(radius / 0.04), 4, 14)
+	var size: float = radius * pow(0.5 / float(count), 1.0 / 3.0)
+	var look: Material = (_mesh.mesh as SphereMesh).material if _mesh and _mesh.mesh is SphereMesh else null
+	for i: int in count:
+		var r: float = size * randf_range(0.75, 1.25)
+		var clump: RigidBody3D = RigidBody3D.new()
+		clump.name = "SnowClump"
+		clump.collision_layer = 0
+		clump.collision_mask = collision_mask
+		clump.mass = maxf(mass_for(r, density), 0.01)
+		clump.physics_material_override = physics_material_override
+		clump.angular_damp = 2.0
+		var shape: CollisionShape3D = CollisionShape3D.new()
+		var sphere: SphereShape3D = SphereShape3D.new()
+		sphere.radius = r
+		shape.shape = sphere
+		clump.add_child(shape)
+		var lump: MeshInstance3D = MeshInstance3D.new()
+		var mesh: SphereMesh = SphereMesh.new()
+		mesh.radius = r
+		mesh.height = r * 1.5 # a little squashed, as broken snow is
+		mesh.radial_segments = 8
+		mesh.rings = 4
+		mesh.material = look
+		lump.mesh = mesh
+		clump.add_child(lump)
+		var out: Vector3 = Vector3(randf_range(-1.0, 1.0), randf_range(-0.2, 1.0), randf_range(-1.0, 1.0)).normalized()
+		parent.add_child(clump, true) # SnowClump, SnowClump2, ...
+		clump.global_position = global_position + out * radius * 0.5
+		clump.linear_velocity = linear_velocity * 0.4 + out * randf_range(0.5, 2.0)
+		var melt: Tween = clump.create_tween()
+		melt.tween_interval(clump_life)
+		melt.tween_property(lump, "scale", Vector3.ZERO, 3.0)
+		melt.tween_callback(clump.queue_free)

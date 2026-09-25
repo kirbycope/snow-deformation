@@ -139,7 +139,8 @@ The CPU needs to know where the ground is, to work out how far something has sun
 the deformation texture back from the GPU every frame is exactly what this design avoids.
 `terrain_height_provider` takes a **SnowTerrainHeightFlat** (a constant Y, which is all a flat level
 needs) or a **SnowTerrainHeightRaycast** (a downward ray against a collision mask, cached per cell).
-Subclass `SnowTerrainHeight` for anything else.
+Subclass `SnowTerrainHeight` for anything else, and make the subclass a `@tool` script too, so the editor can
+run it (next section).
 
 The surface shader needs the same heights on the GPU, and the manager provides them: when the provider is not
 flat it samples the ground under the window every `ground_cell` metres, re-baking in `floor_step` jumps as the
@@ -189,6 +190,17 @@ Measured on the v3 snow demo at 1600x900, RTX 4080 Laptop, vsync off, the Player
 
 The GPU was never the limit; the ground bake on the CPU was, which is why it now runs over several frames.
 
+## In the editor
+
+`SnowDeformation` is a `@tool`: in the editor it draws the snow where it will lie, undisturbed, so a level is
+built to it rather than guessed at. The surface mesh and its rings follow the editor's camera as they would the
+Player, over the ground baked round it, and with a `map_rect` the whole map's ground is baked too, so the snow
+shows everywhere it will be. Changing `snow_depth`, the surface sizes, the rings, `map_rect`, `map_ground_cell`,
+`ground_cell` or the height provider in the inspector redraws it. Nothing else runs there: no compute passes,
+no floor, no pressing, and the preview's nodes are not saved with the scene. The height providers are `@tool`
+scripts too, since the editor only runs a resource's script when it is one; a `SnowTerrainHeightRaycast` sees
+HTerrain's collider in the editor as it does in the game.
+
 ## Snowballs
 
 `scenes/snowball.tscn` is a `Snowball`, a `RigidBody3D` that starts the size of a football (22 cm across)
@@ -202,6 +214,17 @@ It rides on the snow instead of sinking through it, because it masks the manager
 section). A snowball touching another one locks its rotation, so one set on top of another holds there
 on friction: a snowman is stacked with nothing more than a pickup that can carry a `RigidBody3D`, such
 as the player controller's own pickup and hold. `max_radius` caps the growth.
+
+A stack holds only until something disturbs it. Anything but another snowball moving into a ball faster than
+`knock_speed` (0.5 m/s: a Player walking into it, a thrown ball, a swung sword) knocks it loose, and so does
+a ball in a stack that starts moving faster than `hold_speed`, which is what happens when the snow is
+ploughed out from under the bottom one and the floor it stands on drops (next section). Either frees the whole
+stack to roll for `knocked_time` (`Snowball.knock()`), so it topples the way it would. A ball that lands or is
+struck hard enough to change its speed by `break_speed` (3 m/s) in one physics step falls apart
+(`Snowball.shatter()`, with a `shattered` signal): half its snow scatters as a handful of clumps, plain rigid
+bodies on no layer of their own that lie in the snow for `clump_life` seconds and melt away, and the rest goes
+up as a spray. A head knocked off a snowman breaks where it lands; one set down by hand does not. Only the
+body's authority decides it breaks, and it tells every peer by RPC.
 
 A big one sinks. The snow bears `snow_strength` pascals (2000 by default, soft settled snow), and a ball
 settles in until the footprint it presses carries its weight: `Snowball.sinks_to` is 2 rho g r^2 / (3 strength),
@@ -232,6 +255,14 @@ underneath and press it on the way. Something that should ride on the snow (a sn
 `floor_layer`, layer 13 by default, and the manager lays a heightmap collider for it at the snow's
 surface less `floor_sink`, with friction 1. It covers the whole window and moves with the focus in
 `floor_step` jumps. Set `floor_layer` to 0 for no floor.
+
+The floor lies in whatever is dug out of the snow. Every stamp records how deep it went at the floor samples it
+covers (within half a cell, since the samples are `floor_cell` apart and a print is narrower), and the floor is
+lowered there, so a trench ploughed beside or under a snowball tips it in, and a stack on it comes down. The
+record is kept by world position, so a trench is still there when the floor comes back to it; `get_floor_height`
+and `dug_depth` read it. What a floor-riding body presses (a snowball's own track) does not dig the floor out from
+under itself: `press_segment` and the `add_*` stamps take `digs_floor`, and the manager passes false for a body
+that masks `floor_layer`.
 
 ## How it works
 
