@@ -89,6 +89,9 @@ const _OVERLAY_SIZE: Vector2 = Vector2(256.0, 256.0)
 ## How many metres across the snow mesh is. Smaller than [member world_size], so tracks survive
 ## leaving the mesh and are still there on the way back.
 @export_range(4.0, 128.0, 1.0) var surface_size: float = 32.0
+## Metres over which the snow thins to nothing at the mesh's edge, so it meets the ground beyond at ground level
+## rather than standing proud of it as a ledge.
+@export_range(0.0, 16.0, 0.5, "suffix:m") var surface_edge_taper: float = 4.0
 ## Quads along each side of the snow mesh. 256 over 32 m is a vertex every 12.5 cm.
 @export_range(16, 512, 16) var surface_subdivisions: int = 256
 
@@ -124,6 +127,13 @@ const _OVERLAY_SIZE: Vector2 = Vector2(256.0, 256.0)
 @export_range(0.05, 5.0, 0.05, "suffix:m") var press_sound_interval: float = 0.6
 ## Crushes that may be heard at once. Past this the quietest are simply not played.
 @export_range(1, 12, 1) var press_voices: int = 4
+
+@export_group("Uneven ground")
+## Spacing of the ground heights the snow surface is laid over, when the ground is not flat. The manager samples
+## [member terrain_height_provider] under the window at this spacing and hands the shader the result, so the snow
+## follows any terrain that provider can see: a [SnowTerrainHeightRaycast] sees anything with collision, which is
+## how HTerrain, Terrain3D and MTerrain all work. A flat provider skips this entirely.
+@export_range(0.1, 4.0, 0.05, "suffix:m") var ground_cell: float = 0.5
 
 @export_group("Kicked snow")
 ## Throw clumps of snow forward from feet moving through it (see [method kick]).
@@ -179,6 +189,10 @@ var _surface_material: ShaderMaterial = null
 var _overlay: TextureRect = null
 var _press_area: Area3D = null
 var _floor: StaticBody3D = null
+var _ground_texture: ImageTexture = null
+var _ground_centre: Vector2 = Vector2(INF, INF)
+var _ground_low: float = 0.0
+var _ground_high: float = 0.0
 var _spray: Node3D = null
 var _kicks: Array[GPUParticles3D] = []
 var _next_kick: int = 0
@@ -276,6 +290,7 @@ func _process(delta: float) -> void:
 		_follow_surface()
 	_follow_press_area()
 	_follow_floor()
+	_follow_ground()
 	if scrolled:
 		_publish_globals()
 	if _overlay != null:
@@ -865,6 +880,78 @@ func kick(at: Vector3, velocity: Vector3, clumps: int) -> void:
 
 #endregion
 
+#region Uneven ground
+
+## True when the ground is not one flat plane, so the surface needs heights baked for it.
+func _ground_is_uneven() -> bool:
+	return _provider != null and not (_provider is SnowTerrainHeightFlat)
+
+
+## Re-samples the ground under the window in [member floor_step] jumps and hands it to the surface shader, so the
+## snow lies on hills rather than cutting through them at one height.
+func _follow_ground() -> void:
+	if _surface_material == null or not _ground_is_uneven():
+		return
+	var centre: Vector2 = Vector2.ZERO
+	if _focus != null and is_instance_valid(_focus):
+		centre = Vector2(_focus.global_position.x, _focus.global_position.z)
+	centre = Vector2(snappedf(centre.x, floor_step), snappedf(centre.y, floor_step))
+	if centre == _ground_centre:
+		return
+	_ground_centre = centre
+	bake_ground(centre)
+
+
+## Samples the ground in a square round [param centre], wide enough for the whole window, and gives it to the
+## surface material as its heightmap. Returns the image, for a caller that wants to look.
+func bake_ground(centre: Vector2) -> Image:
+	var side: int = ceili((world_size + floor_step * 2.0) / ground_cell)
+	var span: float = float(side) * ground_cell
+	var origin: Vector2 = centre - Vector2(span, span) * 0.5
+	var image: Image = Image.create_empty(side, side, false, Image.FORMAT_RF)
+	_ground_low = INF
+	_ground_high = -INF
+	for z: int in side:
+		for x: int in side:
+			# Each texel's height is taken at its centre, which is where linear filtering reads it back exactly.
+			var h: float = get_terrain_height(origin + (Vector2(x, z) + Vector2(0.5, 0.5)) * ground_cell)
+			image.set_pixel(x, z, Color(h, 0.0, 0.0))
+			_ground_low = minf(_ground_low, h)
+			_ground_high = maxf(_ground_high, h)
+	if _ground_texture == null or _ground_texture.get_width() != side:
+		_ground_texture = ImageTexture.create_from_image(image)
+	else:
+		_ground_texture.update(image)
+	if _surface_material != null:
+		_surface_material.set_shader_parameter(&"use_heightmap", true)
+		_surface_material.set_shader_parameter(&"heightmap", _ground_texture)
+		_surface_material.set_shader_parameter(&"heightmap_origin", origin)
+		_surface_material.set_shader_parameter(&"heightmap_size", span)
+		_surface_material.set_shader_parameter(&"heightmap_scale", 1.0)
+		_surface_material.set_shader_parameter(&"terrain_y", 0.0)
+	_fit_surface_bounds()
+	return image
+
+
+## The surface mesh is a flat plane the vertex shader lifts, so its bounds have to be told where the snow really is,
+## or it is culled on a hillside.
+func _fit_surface_bounds() -> void:
+	if _surface == null or not is_instance_valid(_surface):
+		return
+	var low: float = get_terrain_height(Vector2.ZERO)
+	var high: float = low
+	if _ground_is_uneven() and _ground_low <= _ground_high:
+		low = _ground_low
+		high = _ground_high
+	var plane: PlaneMesh = _surface.mesh as PlaneMesh
+	plane.custom_aabb = AABB(
+		Vector3(-surface_size * 0.5, low - snow_depth - 1.0, -surface_size * 0.5),
+		Vector3(surface_size, (high - low) + 2.0 * snow_depth + max_rim_height + 2.0, surface_size)
+	)
+	_surface.extra_cull_margin = snow_depth + max_rim_height + 1.0
+
+#endregion
+
 #region Packed snow floor
 
 ## Lays the floor a [Snowball] rides on: a heightmap over the window at the snow's surface less
@@ -924,13 +1011,7 @@ func _on_depth_changed() -> void:
 	_publish_globals()
 	_floor_centre = Vector2(INF, INF)
 	_follow_floor()
-	if _surface != null and is_instance_valid(_surface):
-		var plane: PlaneMesh = _surface.mesh as PlaneMesh
-		plane.custom_aabb = AABB(
-			Vector3(-surface_size * 0.5, -snow_depth - 1.0, -surface_size * 0.5),
-			Vector3(surface_size, snow_depth + max_rim_height + 2.0, surface_size)
-		)
-		_surface.extra_cull_margin = snow_depth + max_rim_height + 1.0
+	_fit_surface_bounds()
 	clear()
 
 
@@ -990,6 +1071,10 @@ func _follow_surface() -> void:
 		0.0,
 		snappedf(centre.y, spacing)
 	)
+	if _surface_material != null:
+		_surface_material.set_shader_parameter(&"surface_centre", Vector2(_surface.global_position.x, _surface.global_position.z))
+		_surface_material.set_shader_parameter(&"surface_half", surface_size * 0.5)
+		_surface_material.set_shader_parameter(&"surface_edge_taper", surface_edge_taper)
 
 
 ## The R, G and B of the deformation texture in the corner, for checking stamps land where intended.

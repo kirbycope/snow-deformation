@@ -399,6 +399,69 @@ func test_no_floor_layer_lays_no_floor() -> void:
 #endregion
 
 
+#region Uneven ground
+
+## Ground rising half a metre for every metre east: a hillside.
+class Slope:
+	extends SnowTerrainHeight
+	func height_at(xz: Vector2) -> float:
+		return xz.x * 0.5
+
+
+func _on_slope() -> SnowDeformation:
+	var hill: SnowDeformation = MANAGER.new()
+	hill.snow_depth = 0.4
+	hill.terrain_height_provider = Slope.new()
+	add_child_autofree(hill)
+	return hill
+
+
+func test_the_ground_is_baked_under_the_window() -> void:
+	var hill: SnowDeformation = _on_slope()
+	var image: Image = hill.bake_ground(Vector2.ZERO)
+	var side: int = image.get_width()
+	assert_gte(float(side) * hill.ground_cell, hill.world_size, "It covers the whole window")
+	var span: float = float(side) * hill.ground_cell
+	var west: float = image.get_pixel(0, side / 2).r
+	var east: float = image.get_pixel(side - 1, side / 2).r
+	assert_almost_eq(east - west, (span - hill.ground_cell) * 0.5, 0.01, "and rises with the hill, texel centre to texel centre")
+
+
+func test_the_surface_is_laid_over_the_hill() -> void:
+	var hill: SnowDeformation = _on_slope()
+	await wait_process_frames(2)
+	var surface: MeshInstance3D = hill.get_node_or_null("SnowSurface") as MeshInstance3D
+	assert_not_null(surface, "There is a surface")
+	var material: ShaderMaterial = surface.material_override as ShaderMaterial
+	assert_true(material.get_shader_parameter(&"use_heightmap"), "which reads the baked ground")
+	assert_not_null(material.get_shader_parameter(&"heightmap"))
+	var bounds: AABB = (surface.mesh as PlaneMesh).custom_aabb
+	assert_lt(bounds.position.y, -5.0, "and whose bounds reach down the hill")
+	assert_gt(bounds.end.y, 5.0, "and up it, so it is not culled on a hillside")
+
+
+func test_the_surface_tells_the_shader_where_its_edge_is() -> void:
+	var flat: SnowDeformation = MANAGER.new()
+	add_child_autofree(flat)
+	await wait_process_frames(2)
+	var surface: MeshInstance3D = flat.get_node("SnowSurface") as MeshInstance3D
+	var material: ShaderMaterial = surface.material_override as ShaderMaterial
+	assert_almost_eq(material.get_shader_parameter(&"surface_half") as float, flat.surface_size * 0.5, 0.001, "so the snow can thin to nothing at the mesh's edge")
+	assert_eq(material.get_shader_parameter(&"surface_edge_taper"), flat.surface_edge_taper)
+	assert_eq(material.get_shader_parameter(&"surface_centre"), Vector2(surface.global_position.x, surface.global_position.z))
+
+
+func test_flat_ground_bakes_nothing() -> void:
+	var flat: SnowDeformation = MANAGER.new()
+	add_child_autofree(flat)
+	await wait_process_frames(2)
+	var surface: MeshInstance3D = flat.get_node_or_null("SnowSurface") as MeshInstance3D
+	var material: ShaderMaterial = surface.material_override as ShaderMaterial
+	assert_ne(material.get_shader_parameter(&"use_heightmap"), true, "A flat level needs no heights, only terrain_y")
+
+#endregion
+
+
 #region Finding the manager
 
 func test_a_stamper_finds_the_manager_above_it_in_the_tree() -> void:

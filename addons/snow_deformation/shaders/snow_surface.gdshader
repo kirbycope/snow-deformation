@@ -61,6 +61,11 @@ uniform float glint_distance : hint_range(1.0, 60.0) = 15.0;
 group_uniforms edges;
 // Fraction of the deformation texture faded to nothing at its border, so the window's edge is invisible.
 uniform float border_fade : hint_range(0.01, 0.5) = 0.1;
+// Where the surface mesh is and how far it reaches, and over how many metres its snow thins to nothing at its
+// edge, so it meets whatever lies beyond (a terrain textured as snow) at ground level rather than as a ledge.
+uniform vec2 surface_centre = vec2(0.0);
+uniform float surface_half = 16.0;
+uniform float surface_edge_taper = 4.0;
 
 varying vec3 world_pos;
 
@@ -123,7 +128,10 @@ vec4 sample_deform(vec2 world_xz) {
 
 float surface_height(vec2 world_xz) {
 	vec4 d = sample_deform(world_xz);
-	return terrain_height(world_xz) + snow_depth - d.r + d.g;
+	vec2 from_centre = abs(world_xz - surface_centre);
+	float reach = max(from_centre.x, from_centre.y);
+	float thickness = 1.0 - smoothstep(surface_half - max(surface_edge_taper, 1e-3), surface_half, reach);
+	return terrain_height(world_xz) + (snow_depth - d.r + d.g) * thickness;
 }
 
 void vertex() {

@@ -141,9 +141,17 @@ the deformation texture back from the GPU every frame is exactly what this desig
 needs) or a **SnowTerrainHeightRaycast** (a downward ray against a collision mask, cached per cell).
 Subclass `SnowTerrainHeight` for anything else.
 
-The surface shader needs the same heights on the GPU. It takes an optional heightmap
-(`use_heightmap`, `heightmap`, `heightmap_origin`, `heightmap_size`, `heightmap_scale`) and otherwise
-uses the constant `terrain_y`.
+The surface shader needs the same heights on the GPU, and the manager provides them: when the provider is not
+flat it samples the ground under the window every `ground_cell` metres, re-baking in `floor_step` jumps as the
+focus moves, and gives the shader that heightmap. So the snow lies on any terrain its provider can see, and a
+`SnowTerrainHeightRaycast` sees anything with collision. That is how it works on HTerrain, and the same holds
+for Terrain3D and MTerrain, which also build collision from their heightmaps. Put the terrain's collision on a
+layer of its own and give the raycast only that mask, or the snow is laid over whatever else the ray meets
+first: the Player, a horse, a ball.
+
+The snow mesh covers `surface_size` around the focus and thins to nothing over its last `surface_edge_taper`
+metres, so it meets the ground beyond at ground level rather than as a ledge. Texture the terrain itself as
+snow and the two read as one field.
 
 ## Snowballs
 
