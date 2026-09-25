@@ -122,3 +122,55 @@ func test_something_else_touching_it_does_not_stop_it_rolling() -> void:
 	assert_false(ball.is_stacked(), "Only another snowball holds it")
 	ball.call("_on_body_exited", wall)
 	assert_engine_error_count(0, "and something else leaving it is no error")
+
+
+func test_a_big_ball_sinks_and_a_football_barely_marks_the_snow() -> void:
+	assert_lt(Snowball.sinks_to(0.11, 250.0, 2000.0), 0.015, "A football goes in about a centimetre")
+	assert_gt(Snowball.sinks_to(0.4, 250.0, 2000.0), 0.1, "a snowman's base a hand's depth")
+	assert_lt(Snowball.sinks_to(0.4, 250.0, 20000.0), 0.02, "and on hard-packed snow hardly at all")
+
+
+func test_sinking_is_what_slows_a_big_ball() -> void:
+	var small: float = Snowball.sunk_resistance(Snowball.sinks_to(0.11, 250.0, 2000.0), 0.11)
+	var big: float = Snowball.sunk_resistance(0.4 * Snowball.MAX_SINK, 0.4)
+	assert_lt(small, 0.25, "A football rolls on the packed snow's own resistance")
+	assert_gt(big, 0.33, "a big one sunk a quarter of its radius ploughs, at a third of its weight")
+
+
+func test_a_storm_rolls_a_football_but_not_a_snowman_base() -> void:
+	var storm: Vector3 = Vector3(36.0, 0.0, 0.0)
+	var football: float = Snowball.wind_force(storm, 0.11, 0.47).length() / Snowball.mass_for(0.11, 250.0)
+	assert_gt(football, 9.8 * 0.25, "A 36 m/s storm pushes a football harder than the snow holds it")
+	var base: float = Snowball.wind_force(storm, 0.4, 0.47).length() / Snowball.mass_for(0.4, 250.0)
+	assert_lt(base, 9.8 * Snowball.sunk_resistance(0.4 * Snowball.MAX_SINK, 0.4), "but not a snowman's base, sunk in")
+	assert_almost_eq(Snowball.wind_force(Vector3.ZERO, 0.3, 0.47), Vector3.ZERO, Vector3.ONE * 0.0001, "Still air pushes nothing")
+
+
+func test_the_wind_blows_a_ball_along() -> void:
+	_snow.set_wind(20.0, Vector3(0.0, 0.0, 2.0))
+	assert_almost_eq(_snow.wind, Vector3(0.0, 0.0, 20.0), Vector3.ONE * 0.0001, "set_wind takes a weather system's strength and direction")
+	var ball: Snowball = _ball()
+	ball.global_position = Vector3(0.0, 3.0, 0.0)
+	await wait_physics_frames(20)
+	assert_gt(ball.linear_velocity.z, 0.5, "and a ball in it drifts downwind")
+
+
+func test_a_ball_under_the_floor_is_lifted_onto_it() -> void:
+	await wait_physics_frames(2)
+	assert_true(_snow.floor_covers(Vector2.ZERO), "The floor covers the middle of the window")
+	assert_false(_snow.floor_covers(Vector2(500.0, 0.0)), "and not far beyond it")
+	var ball: Snowball = _ball()
+	ball.global_position = Vector3(0.0, 0.12, 0.0) # set in the snow, below the floor
+	await wait_physics_frames(10)
+	assert_gt(ball.global_position.y, _snow.get_floor_height(Vector2.ZERO), "It rides on the snow, not the ground beneath")
+
+
+func test_a_big_ball_settles_into_the_snow() -> void:
+	await wait_physics_frames(2)
+	var ball: Snowball = _ball()
+	ball.radius = 0.4
+	var top: float = _snow.get_floor_height(Vector2.ZERO)
+	ball.global_position = Vector3(0.0, top + 0.45, 0.0)
+	await wait_seconds(1.5)
+	assert_almost_eq(ball.sink, 0.1, 0.01, "It sinks a quarter of its radius")
+	assert_almost_eq(ball.global_position.y - ball.radius, top - ball.sink, 0.02, "and its underside is that far under the floor")

@@ -167,6 +167,25 @@ section). A snowball touching another one locks its rotation, so one set on top 
 on friction: a snowman is stacked with nothing more than a pickup that can carry a `RigidBody3D`, such
 as the player controller's own pickup and hold. `max_radius` caps the growth.
 
+A big one sinks. The snow bears `snow_strength` pascals (2000 by default, soft settled snow), and a ball
+settles in until the footprint it presses carries its weight: `Snowball.sinks_to` is 2 rho g r^2 / (3 strength),
+about a centimetre for a football and a hand's depth for a snowman's base, never past a quarter of the radius
+(`MAX_SINK`) or the snow there is. It ploughs a trench to its own underside as it rolls, and its rolling
+resistance becomes the square root of the depth over the diameter (`sunk_resistance`, as for a wheel in soft
+ground) once that is more than `rolling_resistance`, so a ball slows as it grows and at last stops. The
+collider keeps the ball's shape above the snow and only its underside rides higher, kept upright however the
+ball turns, so a ball stacked on it sits on what is drawn.
+
+It catches the wind. `SnowDeformation.wind` is in metres per second, and each ball takes air drag on its
+cross-section from it (`Snowball.wind_force`, half rho Cd A v^2 with `drag_coefficient` 0.47). Drag grows with
+the square of the radius and the mass with the cube, so in a strong wind a football rolls off downwind, grows,
+and stops once it is too heavy to push through the snow it has sunk into: in a 36 m/s storm, at about 0.3 m.
+Wire a weather system to `SnowDeformation.set_wind(strength, direction)` in the scene, as both demos wire
+WeatherFX's `wind_changed`; `wind_scale` converts a strength in units of the weather system's own.
+
+A ball found under the floor, set down in the snow or left resting on the ground beyond the floor until the
+focus came near, is lifted back on top of it (`SnowDeformation.floor_covers` says where the floor reaches).
+
 Only the body's multiplayer authority grows it. `radius` is the one property a synchronizer has to
 carry for the other peers to match.
 

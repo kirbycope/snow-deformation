@@ -157,6 +157,14 @@ const _OVERLAY_SIZE: Vector2 = Vector2(256.0, 256.0)
 ## How far the focus moves before the floor is rebuilt around it. It covers the whole window plus this.
 @export_range(1.0, 16.0, 1.0, "suffix:m") var floor_step: float = 4.0
 
+@export_group("Wind")
+## The wind over the snow, in metres per second, which way and how hard. A [Snowball] catches it and rolls
+## away downwind, growing as it goes. Wire a weather system to [method set_wind] in the scene.
+@export var wind: Vector3 = Vector3.ZERO
+## Metres per second for each unit of strength handed to [method set_wind], for a weather system whose
+## wind strength is in units of its own.
+@export_range(0.0, 5.0, 0.01) var wind_scale: float = 1.0
+
 @export_group("Debug")
 ## Show the deformation texture in the corner of the screen.
 @export var debug_overlay: bool = false
@@ -1023,6 +1031,23 @@ func get_floor_height(xz: Vector2) -> float:
 ## True for the floor collider, so a body can tell it is riding on the snow from what it touches.
 func is_floor(body: Object) -> bool:
 	return body != null and body == _floor
+
+
+## True where the floor reaches, less a metre at its edge: it covers a square round the focus, and a body
+## further out rests on the ground under the snow instead.
+func floor_covers(xz: Vector2) -> bool:
+	if _floor == null or not is_instance_valid(_floor) or _floor_shape == null:
+		return false
+	var reach: float = float(_floor_shape.map_width - 1) * 0.5 * floor_cell - 1.0
+	var off: Vector2 = (xz - _floor_centre).abs()
+	return off.x < reach and off.y < reach
+
+
+## Sets [member wind] from a weather system's [param strength] and [param direction], as WeatherFX's
+## wind_changed hands them over; the strength is scaled by [member wind_scale].
+func set_wind(strength: float, direction: Vector3) -> void:
+	var flat: Vector3 = Vector3(direction.x, 0.0, direction.z)
+	wind = flat.normalized() * strength * wind_scale if not flat.is_zero_approx() else Vector3.ZERO
 
 #endregion
 
