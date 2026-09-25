@@ -462,6 +462,128 @@ func test_flat_ground_bakes_nothing() -> void:
 #endregion
 
 
+#region Map and mesh rings
+
+func _ringed(rings: int) -> SnowDeformation:
+	var snow: SnowDeformation = MANAGER.new()
+	snow.surface_size = 16.0
+	snow.surface_subdivisions = 32
+	snow.surface_rings = rings
+	add_child_autofree(snow)
+	return snow
+
+
+func _vertices(instance: MeshInstance3D) -> PackedVector3Array:
+	return instance.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
+
+
+func _offsets(instance: MeshInstance3D) -> PackedVector2Array:
+	return instance.mesh.surface_get_arrays(0)[Mesh.ARRAY_TEX_UV2]
+
+
+func test_rings_take_the_snow_far_for_few_vertices() -> void:
+	var snow: SnowDeformation = _ringed(3)
+	var centre: MeshInstance3D = snow.get_node("SnowSurface") as MeshInstance3D
+	var rings: MeshInstance3D = snow.get_node_or_null("SnowRings") as MeshInstance3D
+	assert_not_null(rings, "Rings round the fine centre")
+	var reach: float = 0.0
+	for v: Vector3 in _vertices(rings):
+		reach = maxf(reach, absf(v.x))
+	assert_almost_eq(reach, 64.0, 0.001, "Three rings, each twice as wide, take a 16 m centre to 128 m across")
+	assert_lt(_vertices(rings).size(), _vertices(centre).size() * 3, "for less than the centre's vertices a ring")
+	assert_eq(rings.cast_shadow, GeometryInstance3D.SHADOW_CASTING_SETTING_OFF, "The rings cast no shadow, which the terrain under them does")
+	assert_eq(centre.cast_shadow, GeometryInstance3D.SHADOW_CASTING_SETTING_ON, "while the fine centre shadows its own tracks")
+	var material: ShaderMaterial = centre.material_override as ShaderMaterial
+	assert_almost_eq(material.get_shader_parameter(&"surface_half") as float, 64.0, 0.001, "and the snow thins at the outer ring's edge")
+
+
+func test_every_other_vertex_on_a_ring_edge_sits_between_its_neighbours() -> void:
+	var snow: SnowDeformation = _ringed(2)
+	var centre: MeshInstance3D = snow.get_node("SnowSurface") as MeshInstance3D
+	var vertices: PackedVector3Array = _vertices(centre)
+	var offsets: PackedVector2Array = _offsets(centre)
+	var stitched: int = 0
+	for i: int in vertices.size():
+		if offsets[i] == Vector2.ZERO:
+			continue
+		stitched += 1
+		var v: Vector3 = vertices[i]
+		var along_z: bool = is_equal_approx(absf(v.x), 8.0)
+		assert_true(along_z or is_equal_approx(absf(v.z), 8.0), "Only vertices on the centre's outer edge are stitched")
+		assert_eq(offsets[i], Vector2(0.0, 0.5) if along_z else Vector2(0.5, 0.0), "each to its neighbours along that edge")
+	assert_eq(stitched, 64, "every other one of the 32 along each of the four sides")
+	var outer: int = 0
+	for offset: Vector2 in _offsets(snow.get_node("SnowRings") as MeshInstance3D):
+		if offset != Vector2.ZERO:
+			outer += 1
+	assert_eq(outer, 64, "The inner ring's edge is stitched to the outer one, and the outermost edge to nothing")
+
+
+func test_the_mesh_follows_in_steps_of_its_coarsest_spacing() -> void:
+	var target: Node3D = Node3D.new()
+	add_child_autofree(target)
+	var snow: SnowDeformation = MANAGER.new()
+	snow.surface_size = 16.0
+	snow.surface_subdivisions = 32
+	snow.surface_rings = 3
+	snow.focus_path = target.get_path()
+	add_child_autofree(snow)
+	target.global_position = Vector3(3.3, 0.0, -5.1)
+	await wait_process_frames(2)
+	var centre: MeshInstance3D = snow.get_node("SnowSurface") as MeshInstance3D
+	assert_eq(centre.global_position, Vector3(4.0, 0.0, -4.0), "Snapped to the outer ring's 4 m spacing, which every ring's divides, so no vertex swims")
+	assert_eq((snow.get_node("SnowRings") as Node3D).global_position, centre.global_position, "and the rings move with it")
+
+
+func test_a_map_keeps_its_own_ground_and_ends_at_its_edge() -> void:
+	var hill: SnowDeformation = MANAGER.new()
+	hill.terrain_height_provider = Slope.new()
+	hill.map_rect = Rect2(-64.0, -32.0, 128.0, 96.0)
+	hill.map_ground_cell = 4.0
+	hill.map_resolution = 1024
+	add_child_autofree(hill)
+	assert_true(hill.has_map())
+	assert_almost_eq(hill.map_texel(), 128.0 / 1024.0, 0.0001, "The map's texture is as wide as its longer side")
+	var material: ShaderMaterial = (hill.get_node("SnowSurface") as MeshInstance3D).material_override as ShaderMaterial
+	assert_true(material.get_shader_parameter(&"use_map_heightmap"), "The ground under the whole map is baked once")
+	assert_almost_eq(material.get_shader_parameter(&"map_heightmap_size") as float, 128.0, 0.001, "at the map's size")
+	var ground: Texture2D = material.get_shader_parameter(&"map_heightmap")
+	assert_eq(ground.get_width(), 32, "at map_ground_cell")
+	assert_true(material.get_shader_parameter(&"use_map_edge"), "and the snow ends at the map's edge")
+	assert_eq(material.get_shader_parameter(&"map_rect_max"), Vector2(64.0, 64.0))
+	var none: SnowDeformation = MANAGER.new()
+	add_child_autofree(none)
+	assert_false(none.has_map(), "No map_rect, no map: only the window keeps tracks")
+
+
+func test_moving_rebakes_the_ground_over_frames_and_lays_the_floor_on_it() -> void:
+	var target: Node3D = Node3D.new()
+	add_child_autofree(target)
+	var hill: SnowDeformation = MANAGER.new()
+	hill.snow_depth = 0.4
+	hill.terrain_height_provider = Slope.new()
+	hill.focus_path = target.get_path()
+	add_child_autofree(hill)
+	await wait_process_frames(2)
+	var material: ShaderMaterial = (hill.get_node("SnowSurface") as MeshInstance3D).material_override as ShaderMaterial
+	var before: Vector2 = material.get_shader_parameter(&"heightmap_origin")
+	target.global_position = Vector3(20.0, 0.0, 0.0)
+	await wait_process_frames(1)
+	assert_eq(material.get_shader_parameter(&"heightmap_origin"), before, "One frame on, the new bake is still under way and the last is in use")
+	var frames: int = 0
+	while material.get_shader_parameter(&"heightmap_origin") == before and frames < 120:
+		await wait_process_frames(1)
+		frames += 1
+	assert_almost_eq((material.get_shader_parameter(&"heightmap_origin") as Vector2).x - before.x, 20.0, 0.001, "A few frames later it moved with the focus")
+	var floor_body: StaticBody3D = hill.get_node("SnowFloor") as StaticBody3D
+	assert_eq(floor_body.global_position, Vector3(20.0, 0.0, 0.0), "The floor moved with it")
+	var map: HeightMapShape3D = (floor_body.get_child(0) as CollisionShape3D).shape as HeightMapShape3D
+	var middle: int = (map.map_width - 1) / 2
+	assert_almost_eq(map.map_data[middle * map.map_width + middle], hill.get_floor_height(Vector2(20.0, 0.0)), 0.01, "laid on the ground the bake sampled")
+
+#endregion
+
+
 #region Finding the manager
 
 func test_a_stamper_finds_the_manager_above_it_in_the_tree() -> void:

@@ -143,7 +143,9 @@ Subclass `SnowTerrainHeight` for anything else.
 
 The surface shader needs the same heights on the GPU, and the manager provides them: when the provider is not
 flat it samples the ground under the window every `ground_cell` metres, re-baking in `floor_step` jumps as the
-focus moves, and gives the shader that heightmap. So the snow lies on any terrain its provider can see, and a
+focus moves, and gives the shader that heightmap. After the first, each bake runs a few rows a frame, 2 ms at
+most, while the last one stays in use, and the packed snow floor is laid from the same samples rather than
+taking its own: walking over uneven ground used to stall a frame for about 35 ms every 4 m. So the snow lies on any terrain its provider can see, and a
 `SnowTerrainHeightRaycast` sees anything with collision. That is how it works on HTerrain, and the same holds
 for Terrain3D and MTerrain, which also build collision from their heightmaps. Put the terrain's collision on a
 layer of its own and give the raycast only that mask, or the snow is laid over whatever else the ray meets
@@ -152,6 +154,40 @@ first: the Player, a horse, a ball.
 The snow mesh covers `surface_size` around the focus and thins to nothing over its last `surface_edge_taper`
 metres, so it meets the ground beyond at ground level rather than as a ledge. Texture the terrain itself as
 snow and the two read as one field.
+
+## Snow over the whole map
+
+Set `map_rect` to the terrain's extent in world XZ and the snow lies on all of it and keeps every track, seen from
+anywhere: across the valley, through a telescope. Only the level of detail follows the focus; the snow stays where
+it is.
+
+- **A map texture.** A second `RGBA16F` deformation texture covers `map_rect`, `map_resolution` texels a side (2048
+  over 512 m is 25 cm a texel, 32 MB). It is fixed to the world and never scrolls, and every stamp is written into it
+  as well as into the window, over only the texels round that frame's stamps. A print narrower than a map texel is
+  widened to three quarters of one, or it would fall between texel centres. The window stays the fine layer, 2.3 cm
+  in the demo, and the surface shader blends from it into the map over the window's border, so a trail keeps its
+  crisp prints near the focus and is still there, coarser, when the focus has gone.
+- **Mesh rings.** `surface_rings` puts rings of coarser mesh round the fine centre, each twice as wide as the one
+  inside it with its vertices twice as far apart: five take a 32 m centre to a kilometre across. The mesh follows the
+  focus in steps of its coarsest spacing, which every ring's spacing divides, so no vertex swims, and every other
+  vertex on a ring's outer edge is put on the line between its neighbours (the offset to them is in its `UV2`), so the
+  rings meet without cracks. The rings cast no shadow: every shadow pass runs the vertex shader again, and the terrain
+  under them casts the hills' shadows already.
+- **The map's ground**, baked once as the level loads at `map_ground_cell` (2 m, 0.17 s of raycasts over 512 m) and
+  read with a cubic B-spline filter, because linear filtering between samples that far apart leaves creases a low
+  sun turns into flat facets. The fine bake round the focus takes over within the window.
+
+The snow ends at the map's edge, thinning over `surface_edge_taper`.
+
+Measured on the v3 snow demo at 1600x900, RTX 4080 Laptop, vsync off, the Player walking at 6 m/s:
+
+| | Mean frame | Worst frame | Load |
+| --- | --- | --- | --- |
+| No snow | 1.62 ms | 4.5 ms | |
+| 48 m window, 32 m mesh | 3.02 ms | 19.1 ms | 1.08 s |
+| 512 m map, 5 rings (1 km mesh) | 3.87 ms | 9.8 ms | 1.53 s |
+
+The GPU was never the limit; the ground bake on the CPU was, which is why it now runs over several frames.
 
 ## Snowballs
 
@@ -238,8 +274,9 @@ it is snowing.
 
 ## What it does not do
 
-Tracks outside the coverage window are gone: nothing is saved and restored as tiles. There are no snow
-puffs on footfall, no accumulation on objects, and no clipmap rings for a larger deformable area.
+Without a `map_rect`, tracks outside the coverage window are gone. With one, they are kept at the map's
+coarser texel, but nothing is saved: a reloaded level starts with fresh snow. There is no accumulation on
+objects.
 
 ## Notes worth knowing
 

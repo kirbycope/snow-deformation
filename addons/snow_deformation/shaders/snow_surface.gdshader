@@ -27,6 +27,23 @@ uniform vec2 heightmap_origin = vec2(0.0);
 uniform float heightmap_size = 1024.0;
 uniform float heightmap_scale = 100.0;
 
+group_uniforms map;
+// The ground under the whole map, baked once, for the snow far from the focus.
+uniform bool use_map_heightmap = false;
+uniform sampler2D map_heightmap : hint_default_black, filter_linear;
+uniform vec2 map_heightmap_origin = vec2(0.0);
+uniform float map_heightmap_size = 512.0;
+// The map's own deformation texture, fixed to the world: every track, however far from the focus, at a coarser texel.
+uniform bool use_map_tracks = false;
+uniform sampler2D map_deform_tex : hint_default_black, filter_linear;
+uniform vec2 map_origin = vec2(0.0);
+uniform float map_size = 512.0;
+uniform float map_texel = 0.25;
+// The snow ends at the map's edge, thinning over surface_edge_taper like the mesh's own edge.
+uniform bool use_map_edge = false;
+uniform vec2 map_rect_min = vec2(0.0);
+uniform vec2 map_rect_max = vec2(0.0);
+
 group_uniforms snow;
 uniform vec3 fresh_albedo : source_color = vec3(0.93, 0.95, 0.98);
 uniform vec3 packed_albedo : source_color = vec3(0.78, 0.84, 0.92);
@@ -105,25 +122,87 @@ vec2 noise_gradient(vec2 p, float scale) {
 	return vec2(dx, dz);
 }
 
-float terrain_height(vec2 world_xz) {
-	if (use_heightmap) {
-		vec2 uv = (world_xz - heightmap_origin) / max(heightmap_size, 1e-4);
-		return terrain_y + texture(heightmap, uv).r * heightmap_scale;
-	}
-	return terrain_y;
+// Cubic B-spline weights for a texel fraction v.
+vec4 bspline(float v) {
+	vec4 n = vec4(1.0, 2.0, 3.0, 4.0) - v;
+	vec4 c = n * n * n;
+	float x = c.x;
+	float y = c.y - 4.0 * c.x;
+	float z = c.z - 4.0 * c.y + 6.0 * c.x;
+	return vec4(x, y, z, 6.0 - x - y - z) * (1.0 / 6.0);
 }
 
-// R = depression, G = berm, B = disturbed mask, faded to nothing towards the window's border and zero
-// outside it, so the snow beyond the deformable area matches ordinary undeformed snow exactly.
-vec4 sample_deform(vec2 world_xz) {
+// A texture's red channel filtered with a cubic B-spline, from four bilinear taps. The map's ground is baked metres
+// apart, and linear filtering between such samples leaves creases a low sun picks out as flat facets; snow lying on
+// the ground rounds it off anyway.
+float texture_smooth(sampler2D tex, vec2 uv) {
+	vec2 size = vec2(textureSize(tex, 0));
+	vec2 p = uv * size - 0.5;
+	vec2 f = fract(p);
+	p -= f;
+	vec4 xw = bspline(f.x);
+	vec4 yw = bspline(f.y);
+	vec4 sums = vec4(xw.xz + xw.yw, yw.xz + yw.yw);
+	vec4 at = (p.xxyy + vec2(-0.5, 1.5).xyxy + vec4(xw.yw, yw.yw) / sums) / size.xxyy;
+	float a = texture(tex, at.xz).r;
+	float b = texture(tex, at.yz).r;
+	float c = texture(tex, at.xw).r;
+	float d = texture(tex, at.yw).r;
+	float sx = sums.x / (sums.x + sums.y);
+	float sy = sums.z / (sums.z + sums.w);
+	return mix(mix(d, c, sx), mix(b, a, sx), sy);
+}
+
+float terrain_height(vec2 world_xz) {
+	float h = terrain_y;
+	if (use_map_heightmap) {
+		h = terrain_y + texture_smooth(map_heightmap, (world_xz - map_heightmap_origin) / max(map_heightmap_size, 1e-4));
+	}
+	if (use_heightmap) {
+		vec2 uv = (world_xz - heightmap_origin) / max(heightmap_size, 1e-4);
+		float near = terrain_y + texture(heightmap, uv).r * heightmap_scale;
+		if (!use_map_heightmap) {
+			return near;
+		}
+		// The fine bake round the focus, blended into the map's over its outer two metres.
+		vec2 to_edge = min(uv, vec2(1.0) - uv) * heightmap_size;
+		h = mix(h, near, clamp(min(to_edge.x, to_edge.y) * 0.5, 0.0, 1.0));
+	}
+	return h;
+}
+
+// How much the fine window counts at world_xz: 1 inside it, fading to 0 over its border.
+float window_weight(vec2 world_xz) {
 	vec2 uv = (world_xz - snow_deform_origin) / max(snow_deform_size, 1e-4);
 	if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) {
-		return vec4(0.0);
+		return 0.0;
 	}
-	vec4 d = textureLod(snow_deform_tex, uv, 0.0);
 	vec2 to_edge = min(uv, vec2(1.0) - uv);
-	float fade = clamp(min(to_edge.x, to_edge.y) / max(border_fade, 1e-4), 0.0, 1.0);
-	return d * fade;
+	return clamp(min(to_edge.x, to_edge.y) / max(border_fade, 1e-4), 0.0, 1.0);
+}
+
+// R = depression, G = berm, B = disturbed mask. The fine window fades towards its border into the map's coarser
+// texture, which holds every track; without a map it fades to nothing, so the snow beyond matches undeformed snow.
+vec4 sample_deform(vec2 world_xz) {
+	float w = window_weight(world_xz);
+	vec4 near = vec4(0.0);
+	if (w > 0.0) {
+		near = textureLod(snow_deform_tex, (world_xz - snow_deform_origin) / max(snow_deform_size, 1e-4), 0.0);
+	}
+	if (!use_map_tracks) {
+		return near * w;
+	}
+	vec4 far = vec4(0.0);
+	vec2 muv = (world_xz - map_origin) / max(map_size, 1e-4);
+	if (w < 1.0 && muv.x >= 0.0 && muv.y >= 0.0 && muv.x <= 1.0 && muv.y <= 1.0) {
+		far = textureLod(map_deform_tex, muv, 0.0);
+	}
+	return mix(far, near, w);
+}
+
+// Spacing to take a normal at: a texel of whichever texture the snow here comes from.
+float normal_step(vec2 world_xz) {
+	return use_map_tracks ? mix(map_texel, snow_deform_texel, window_weight(world_xz)) : snow_deform_texel;
 }
 
 float surface_height(vec2 world_xz) {
@@ -131,22 +210,32 @@ float surface_height(vec2 world_xz) {
 	vec2 from_centre = abs(world_xz - surface_centre);
 	float reach = max(from_centre.x, from_centre.y);
 	float thickness = 1.0 - smoothstep(surface_half - max(surface_edge_taper, 1e-3), surface_half, reach);
+	if (use_map_edge) {
+		vec2 beyond = max(map_rect_min - world_xz, world_xz - map_rect_max);
+		thickness *= 1.0 - smoothstep(-max(surface_edge_taper, 1e-3), 0.0, max(beyond.x, beyond.y));
+	}
 	return terrain_height(world_xz) + (snow_depth - d.r + d.g) * thickness;
 }
 
 void vertex() {
 	world_pos = VERTEX;
-	VERTEX.y = surface_height(VERTEX.xz);
+	// A vertex halfway along a ring's outer edge sits on the line between its neighbours, as the coarser ring outside
+	// it does there; UV2 is the offset to them, and zero everywhere else.
+	if (UV2 != vec2(0.0)) {
+		VERTEX.y = 0.5 * (surface_height(VERTEX.xz - UV2) + surface_height(VERTEX.xz + UV2));
+	} else {
+		VERTEX.y = surface_height(VERTEX.xz);
+	}
 	world_pos.y = VERTEX.y;
 
 	// A coarse normal per vertex as well: lighting and the shadow pass both want something sane at
 	// distance, and the fragment shader refines it where it matters.
-	float e = snow_deform_texel * 2.0;
-	float hl = surface_height(VERTEX.xz - vec2(e, 0.0));
+	// Forward differences, two more samples rather than four: the fragment shader rebuilds the normal properly, so this
+	// one only has to be sane, and every shadow pass runs it again.
+	float e = normal_step(VERTEX.xz) * 2.0;
 	float hr = surface_height(VERTEX.xz + vec2(e, 0.0));
-	float hd = surface_height(VERTEX.xz - vec2(0.0, e));
 	float hu = surface_height(VERTEX.xz + vec2(0.0, e));
-	NORMAL = normalize(vec3(hl - hr, 2.0 * e, hd - hu));
+	NORMAL = normalize(vec3(VERTEX.y - hr, e, VERTEX.y - hu));
 }
 
 void fragment() {
@@ -155,7 +244,7 @@ void fragment() {
 
 	// The whole point of the exercise: rebuild the normal from the height field at a texel's spacing,
 	// so a footprint wall is a crisp shading edge rather than a facet of the grid.
-	float e = snow_deform_texel;
+	float e = normal_step(xz);
 	float hl = surface_height(xz - vec2(e, 0.0));
 	float hr = surface_height(xz + vec2(e, 0.0));
 	float hd = surface_height(xz - vec2(0.0, e));

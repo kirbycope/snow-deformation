@@ -34,8 +34,9 @@ layout(push_constant, std430) uniform Params {
 	float noise_scale;      // Cycles per metre of the edge-perturbing noise.
 	float noise_strength;   // How far that noise pushes the normalised distance.
 	float stamp_count;
-	float reserved0;        // Keeps the block at 64 bytes; the border fade lives in the surface shader.
-	vec4 reserved1;
+	float min_radius;       // No stamp is narrower than this: a coarse texture's texels would miss a print between them.
+	vec2 offset;            // Texel the dispatch starts at, so a pass can cover only where this frame's stamps are.
+	vec2 reserved;          // Keeps the block at 64 bytes; the border fade lives in the surface shader.
 } params;
 
 float hash21(vec2 p) {
@@ -65,7 +66,7 @@ vec2 segment_distance(vec2 p, vec2 a, vec2 b) {
 }
 
 void main() {
-	ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+	ivec2 p = ivec2(gl_GlobalInvocationID.xy) + ivec2(params.offset);
 	ivec2 size = imageSize(deform_image);
 	if (p.x >= size.x || p.y >= size.y) {
 		return;
@@ -94,7 +95,7 @@ void main() {
 			float c = cos(-s.params0.z);
 			float sn = sin(-s.params0.z);
 			local = vec2(local.x * c - local.y * sn, local.x * sn + local.y * c);
-			vec2 half_axes = max(s.params0.xy, vec2(1e-4));
+			vec2 half_axes = max(s.params0.xy, vec2(max(params.min_radius, 1e-4)));
 			d = length(local / half_axes);
 			// Heel-heavy: params1.x is the depth at the heel, params1.y at the toe. Local +Y is forward.
 			float along = clamp(local.y / half_axes.y * 0.5 + 0.5, 0.0, 1.0);
@@ -102,7 +103,7 @@ void main() {
 		} else {
 			// Capsule: a drag mark or a body. Depth runs along the segment.
 			vec2 hit = segment_distance(world, s.a.xz, s.b.xz);
-			float radius = max(s.params0.x, 1e-4);
+			float radius = max(s.params0.x, max(params.min_radius, 1e-4));
 			d = hit.x / radius;
 			depth = mix(s.params1.x, s.params1.y, hit.y);
 		}

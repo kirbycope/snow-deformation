@@ -48,6 +48,9 @@ const _REFILL_QUANTUM: float = 0.003
 
 ## On-screen size of the debug overlay, in pixels.
 const _OVERLAY_SIZE: Vector2 = Vector2(256.0, 256.0)
+## Microseconds a frame may spend sampling the ground under the window, so a re-bake is spread over frames rather than
+## stalling one: at about 3 us a raycast, the window's 12,500 samples take a dozen frames.
+const _BAKE_BUDGET_USEC: int = 2000
 
 @export_group("Window")
 ## The node the deformation window follows. Left empty, the first node in the "Player" group is used,
@@ -57,6 +60,17 @@ const _OVERLAY_SIZE: Vector2 = Vector2(256.0, 256.0)
 @export_enum("512:512", "1024:1024", "2048:2048") var resolution: int = 1024
 ## How many metres across the window covers. One texel is world_size / resolution.
 @export_range(8.0, 256.0, 1.0) var world_size: float = 48.0
+
+@export_group("Map")
+## The part of the world, in XZ, the snow lies on and keeps every track over, however far from the focus. A second,
+## fixed deformation texture covers all of it, [member map_resolution] texels a side, and every stamp is written into it
+## as well, so a trail is still there seen from across the map. The window above is only a sharper layer of detail
+## that follows the focus; the snow itself stays where it is. Left empty, only the window keeps tracks.
+@export var map_rect: Rect2 = Rect2()
+## Texels along each side of the map's deformation texture. 2048 over a 512 m map is 25 cm a texel and 32 MB.
+@export_enum("1024:1024", "2048:2048", "4096:4096") var map_resolution: int = 2048
+## Spacing of the ground heights baked under the whole map, once, as the level loads.
+@export_range(0.5, 8.0, 0.5, "suffix:m") var map_ground_cell: float = 2.0
 
 @export_group("Snow")
 ## Undeformed snow thickness in metres. A stamp can never dig deeper than this.
@@ -86,13 +100,17 @@ const _OVERLAY_SIZE: Vector2 = Vector2(256.0, 256.0)
 @export_group("Surface mesh")
 ## Build and follow a snow surface mesh. Turn this off to drive an existing mesh's material instead.
 @export var create_surface: bool = true
-## How many metres across the snow mesh is. Smaller than [member world_size], so tracks survive
-## leaving the mesh and are still there on the way back.
+## How many metres across the snow mesh's fine centre is. Smaller than [member world_size], so tracks survive
+## leaving it and are still there on the way back.
 @export_range(4.0, 128.0, 1.0) var surface_size: float = 32.0
+## Rings of coarser mesh round the fine centre, each twice as wide as the one inside it with its vertices twice as far
+## apart, so the snow reaches far off for few more vertices: five take a 32 m centre to a kilometre. The mesh follows
+## the focus in steps of its coarsest spacing, so no vertex ever swims. 0 is the fine centre alone.
+@export_range(0, 8, 1) var surface_rings: int = 0
 ## Metres over which the snow thins to nothing at the mesh's edge, so it meets the ground beyond at ground level
 ## rather than standing proud of it as a ledge.
 @export_range(0.0, 16.0, 0.5, "suffix:m") var surface_edge_taper: float = 4.0
-## Quads along each side of the snow mesh. 256 over 32 m is a vertex every 12.5 cm.
+## Quads along each side of the snow mesh's centre, and of each ring. 256 over 32 m is a vertex every 12.5 cm.
 @export_range(16, 512, 16) var surface_subdivisions: int = 256
 
 @export_group("Bodies")
@@ -193,6 +211,8 @@ var _has_origin: bool = false
 var _focus: Node3D = null
 var _provider: SnowTerrainHeight = null
 var _surface: MeshInstance3D = null
+## The coarser rings round [member _surface], which cast no shadow: the terrain under them already casts the hills'.
+var _rings: MeshInstance3D = null
 var _surface_material: ShaderMaterial = null
 var _overlay: TextureRect = null
 var _press_area: Area3D = null
@@ -219,6 +239,17 @@ var _next_voice: int = 0
 ## Packed stamps for this frame, uploaded once and then cleared.
 var _stamps: PackedFloat32Array = PackedFloat32Array()
 var _texture: Texture2DRD = null
+var _map_texture: Texture2DRD = null
+var _map_display: RID = RID()
+var _map_update_set: RID = RID()
+var _map_ground: ImageTexture = null
+var _map_low: float = INF
+var _map_high: float = -INF
+## Where this frame's stamps reach, so the map's pass covers only those texels.
+var _stamp_lo: Vector2 = Vector2(INF, INF)
+var _stamp_hi: Vector2 = Vector2(-INF, -INF)
+## The ground bake under way, a few rows a frame: centre, origin, side, image, row, low, high.
+var _bake: Dictionary = {}
 ## Texels the window moved since the last render-thread call, consumed by the next one.
 var _pending_shift: Vector2i = Vector2i.ZERO
 # Loaded on the main thread in _ready: the render thread does no resource loading.
@@ -249,6 +280,7 @@ func _ready() -> void:
 	add_to_group(GROUP)
 	_texel_size = world_size / float(resolution)
 	_texture = Texture2DRD.new()
+	_map_texture = Texture2DRD.new()
 
 	if Engine.is_editor_hint():
 		return
@@ -260,6 +292,7 @@ func _ready() -> void:
 		_build_spray()
 	if create_surface:
 		_build_surface()
+		_bake_map_ground()
 	_snap_origin(true)
 	_publish_globals()
 
@@ -282,6 +315,8 @@ func _exit_tree() -> void:
 	# thread that made it.
 	if _texture != null:
 		_texture.texture_rd_rid = RID()
+	if _map_texture != null:
+		_map_texture.texture_rd_rid = RID()
 	if _compute_ready:
 		RenderingServer.call_on_render_thread(_free_compute)
 		_compute_ready = false
@@ -299,6 +334,7 @@ func _process(delta: float) -> void:
 	_follow_press_area()
 	_follow_floor()
 	_follow_ground()
+	_step_bake()
 	if scrolled:
 		_publish_globals()
 	if _overlay != null:
@@ -318,6 +354,9 @@ func _process(delta: float) -> void:
 	# that silently stays flat.
 	if not _texture_published:
 		RenderingServer.global_shader_parameter_set(&"snow_deform_tex", _texture)
+		if _surface_material != null and has_map():
+			_surface_material.set_shader_parameter(&"map_deform_tex", _map_texture)
+			_surface_material.set_shader_parameter(&"use_map_tracks", true)
 		_texture_published = true
 
 	# Nothing to do at all: no stamps, no refill due and no scroll means the texture cannot have changed.
@@ -330,7 +369,7 @@ func _process(delta: float) -> void:
 	var payload: PackedFloat32Array = _stamps.duplicate()
 	var shift: Vector2i = _pending_shift
 	_pending_shift = Vector2i.ZERO
-	RenderingServer.call_on_render_thread(_render_frame.bind(payload, count, decay_dt, _origin, shift))
+	RenderingServer.call_on_render_thread(_render_frame.bind(payload, count, decay_dt, _origin, shift, _map_region(count, decay_dt)))
 	_end_frame()
 
 
@@ -728,6 +767,25 @@ func _end_frame() -> void:
 	stamps_last_frame = stamps_this_frame
 	stamps_this_frame = 0
 	_stamps.clear()
+	_stamp_lo = Vector2(INF, INF)
+	_stamp_hi = Vector2(-INF, -INF)
+
+
+## The map's texels this frame's pass must cover: those round its stamps, all of it while refill is fading the snow
+## back, and none at all when there is nothing to do.
+func _map_region(count: int, decay_dt: float) -> Rect2i:
+	if not has_map():
+		return Rect2i()
+	if decay_dt > 0.0:
+		return Rect2i(0, 0, map_resolution, map_resolution)
+	if count <= 0:
+		return Rect2i()
+	var texel: float = map_texel()
+	var lo: Vector2i = (Vector2i(((_stamp_lo - map_rect.position) / texel).floor()) - Vector2i(2, 2)).clamp(Vector2i.ZERO, Vector2i(map_resolution, map_resolution))
+	var hi: Vector2i = (Vector2i(((_stamp_hi - map_rect.position) / texel).ceil()) + Vector2i(2, 2)).clamp(Vector2i.ZERO, Vector2i(map_resolution, map_resolution))
+	if hi.x <= lo.x or hi.y <= lo.y:
+		return Rect2i()
+	return Rect2i(lo, hi - lo)
 
 
 func _push(stamp: PackedFloat32Array) -> void:
@@ -739,6 +797,10 @@ func _push(stamp: PackedFloat32Array) -> void:
 		dropped_stamps += 1
 		return
 	_stamps.append_array(stamp)
+	# How far this stamp's print and berm can reach, for the map's pass.
+	var reach: float = maxf(stamp[8], stamp[9]) * (1.0 + stamp[15] + noise_strength)
+	_stamp_lo = _stamp_lo.min(Vector2(minf(stamp[0], stamp[4]) - reach, minf(stamp[2], stamp[6]) - reach))
+	_stamp_hi = _stamp_hi.max(Vector2(maxf(stamp[0], stamp[4]) + reach, maxf(stamp[2], stamp[6]) + reach))
 
 #endregion
 
@@ -896,7 +958,8 @@ func _ground_is_uneven() -> bool:
 
 
 ## Re-samples the ground under the window in [member floor_step] jumps and hands it to the surface shader, so the
-## snow lies on hills rather than cutting through them at one height.
+## snow lies on hills rather than cutting through them at one height. The first bake is done at once; after that a
+## bake runs a few rows a frame ([method _step_bake]) while the last one stays in use, so walking never stalls on it.
 func _follow_ground() -> void:
 	if _surface_material == null or not _ground_is_uneven():
 		return
@@ -907,25 +970,66 @@ func _follow_ground() -> void:
 	if centre == _ground_centre:
 		return
 	_ground_centre = centre
-	bake_ground(centre)
+	if _ground_texture == null:
+		bake_ground(centre)
+		return
+	_bake = _new_bake(centre)
 
 
 ## Samples the ground in a square round [param centre], wide enough for the whole window, and gives it to the
-## surface material as its heightmap. Returns the image, for a caller that wants to look.
+## surface material as its heightmap, all at once. Returns the image, for a caller that wants to look.
 func bake_ground(centre: Vector2) -> Image:
+	var job: Dictionary = _new_bake(centre)
+	_sample_rows(job, int(job["side"]))
+	_apply_bake(job)
+	return job["image"]
+
+
+func _new_bake(centre: Vector2) -> Dictionary:
 	var side: int = ceili((world_size + floor_step * 2.0) / ground_cell)
 	var span: float = float(side) * ground_cell
-	var origin: Vector2 = centre - Vector2(span, span) * 0.5
-	var image: Image = Image.create_empty(side, side, false, Image.FORMAT_RF)
-	_ground_low = INF
-	_ground_high = -INF
-	for z: int in side:
+	return {
+		"centre": centre, "origin": centre - Vector2(span, span) * 0.5, "side": side, "cell": ground_cell,
+		"image": Image.create_empty(side, side, false, Image.FORMAT_RF), "row": 0, "low": INF, "high": -INF,
+	}
+
+
+## Samples up to [param rows] more rows of [param job]. True once it has every row.
+func _sample_rows(job: Dictionary, rows: int) -> bool:
+	var side: int = job["side"]
+	var cell: float = job["cell"]
+	var origin: Vector2 = job["origin"]
+	var image: Image = job["image"]
+	var end: int = mini(int(job["row"]) + rows, side)
+	for z: int in range(int(job["row"]), end):
 		for x: int in side:
 			# Each texel's height is taken at its centre, which is where linear filtering reads it back exactly.
-			var h: float = get_terrain_height(origin + (Vector2(x, z) + Vector2(0.5, 0.5)) * ground_cell)
+			var h: float = get_terrain_height(origin + (Vector2(x, z) + Vector2(0.5, 0.5)) * cell)
 			image.set_pixel(x, z, Color(h, 0.0, 0.0))
-			_ground_low = minf(_ground_low, h)
-			_ground_high = maxf(_ground_high, h)
+			job["low"] = minf(job["low"], h)
+			job["high"] = maxf(job["high"], h)
+	job["row"] = end
+	return end >= side
+
+
+## Carries the bake under way on for [constant _BAKE_BUDGET_USEC], a row at a time, and puts it in use once done.
+func _step_bake() -> void:
+	if _bake.is_empty():
+		return
+	var start: int = Time.get_ticks_usec()
+	while Time.get_ticks_usec() - start < _BAKE_BUDGET_USEC:
+		if _sample_rows(_bake, 1):
+			_apply_bake(_bake)
+			_bake = {}
+			return
+
+
+## Hands a finished bake to the surface material, and to the floor, which lies on the same ground.
+func _apply_bake(job: Dictionary) -> void:
+	var image: Image = job["image"]
+	var side: int = job["side"]
+	_ground_low = job["low"]
+	_ground_high = job["high"]
 	if _ground_texture == null or _ground_texture.get_width() != side:
 		_ground_texture = ImageTexture.create_from_image(image)
 	else:
@@ -933,12 +1037,43 @@ func bake_ground(centre: Vector2) -> Image:
 	if _surface_material != null:
 		_surface_material.set_shader_parameter(&"use_heightmap", true)
 		_surface_material.set_shader_parameter(&"heightmap", _ground_texture)
-		_surface_material.set_shader_parameter(&"heightmap_origin", origin)
-		_surface_material.set_shader_parameter(&"heightmap_size", span)
+		_surface_material.set_shader_parameter(&"heightmap_origin", job["origin"])
+		_surface_material.set_shader_parameter(&"heightmap_size", float(side) * float(job["cell"]))
 		_surface_material.set_shader_parameter(&"heightmap_scale", 1.0)
 		_surface_material.set_shader_parameter(&"terrain_y", 0.0)
 	_fit_surface_bounds()
-	return image
+	_floor_from_bake(job)
+
+
+## Bakes the ground under the whole map once, at [member map_ground_cell], for the snow far from the focus to lie on.
+func _bake_map_ground() -> void:
+	if _surface_material == null or not has_map() or not _ground_is_uneven():
+		return
+	var cell: float = map_ground_cell
+	var side: int = ceili(maxf(map_rect.size.x, map_rect.size.y) / cell)
+	var job: Dictionary = {
+		"origin": map_rect.position, "side": side, "cell": cell,
+		"image": Image.create_empty(side, side, false, Image.FORMAT_RF), "row": 0, "low": INF, "high": -INF,
+	}
+	_sample_rows(job, side)
+	_map_low = job["low"]
+	_map_high = job["high"]
+	_map_ground = ImageTexture.create_from_image(job["image"])
+	_surface_material.set_shader_parameter(&"use_map_heightmap", true)
+	_surface_material.set_shader_parameter(&"map_heightmap", _map_ground)
+	_surface_material.set_shader_parameter(&"map_heightmap_origin", map_rect.position)
+	_surface_material.set_shader_parameter(&"map_heightmap_size", float(side) * cell)
+	_fit_surface_bounds()
+
+
+## True when [member map_rect] gives the snow a map to keep its tracks over.
+func has_map() -> bool:
+	return map_rect.size.x > 0.0 and map_rect.size.y > 0.0
+
+
+## Metres per texel of the map's deformation texture, which is square and as wide as the map's longer side.
+func map_texel() -> float:
+	return maxf(map_rect.size.x, map_rect.size.y) / float(map_resolution)
 
 
 ## The surface mesh is a flat plane the vertex shader lifts, so its bounds have to be told where the snow really is,
@@ -951,11 +1086,17 @@ func _fit_surface_bounds() -> void:
 	if _ground_is_uneven() and _ground_low <= _ground_high:
 		low = _ground_low
 		high = _ground_high
-	var plane: PlaneMesh = _surface.mesh as PlaneMesh
-	plane.custom_aabb = AABB(
-		Vector3(-surface_size * 0.5, low - snow_depth - 1.0, -surface_size * 0.5),
-		Vector3(surface_size, (high - low) + 2.0 * snow_depth + max_rim_height + 2.0, surface_size)
+	if _map_low <= _map_high:
+		low = minf(low, _map_low)
+		high = maxf(high, _map_high)
+	var half: float = _surface_half()
+	var bounds: AABB = AABB(
+		Vector3(-half, low - snow_depth - 1.0, -half),
+		Vector3(half * 2.0, (high - low) + 2.0 * snow_depth + max_rim_height + 2.0, half * 2.0)
 	)
+	_surface.mesh.set(&"custom_aabb", bounds)
+	if _rings != null and is_instance_valid(_rings):
+		_rings.mesh.set(&"custom_aabb", bounds)
 	_surface.extra_cull_margin = snow_depth + max_rim_height + 1.0
 
 #endregion
@@ -992,6 +1133,8 @@ func _build_floor() -> void:
 func _follow_floor() -> void:
 	if _floor == null or not is_instance_valid(_floor):
 		return
+	if _ground_is_uneven() and _surface_material != null:
+		return # Laid from each ground bake instead, which has already sampled the same ground.
 	var centre: Vector2 = Vector2.ZERO
 	if _focus != null and is_instance_valid(_focus):
 		centre = Vector2(_focus.global_position.x, _focus.global_position.z)
@@ -1011,6 +1154,36 @@ func _follow_floor() -> void:
 	_floor.global_position = Vector3(centre.x, 0.0, centre.y)
 
 
+## Lays the floor on the ground [param job] sampled, rather than sampling it again: the floor covers the same square
+## round the same centre, a metre a sample to the bake's half metre.
+func _floor_from_bake(job: Dictionary) -> void:
+	if _floor == null or not is_instance_valid(_floor) or not job.has("centre"):
+		return
+	var centre: Vector2 = job["centre"]
+	var image: Image = job["image"]
+	var origin: Vector2 = job["origin"]
+	var cell: float = job["cell"]
+	var last: Vector2 = Vector2(image.get_width() - 1, image.get_height() - 1)
+	var side: int = _floor_shape.map_width
+	var half: float = float(side - 1) * 0.5
+	var lift: float = snow_depth - floor_sink
+	var heights: PackedFloat32Array = PackedFloat32Array()
+	heights.resize(side * side)
+	for z: int in side:
+		for x: int in side:
+			var at: Vector2 = centre + Vector2(float(x) - half, float(z) - half) * floor_cell
+			# Bilinear, from the texel centres, as the shader reads the same image.
+			var t: Vector2 = ((at - origin) / cell - Vector2(0.5, 0.5)).clamp(Vector2.ZERO, last)
+			var i: Vector2i = Vector2i(t.floor()).min(Vector2i(last) - Vector2i.ONE).max(Vector2i.ZERO)
+			var f: Vector2 = t - Vector2(i)
+			var top: float = lerpf(image.get_pixel(i.x, i.y).r, image.get_pixel(i.x + 1, i.y).r, f.x)
+			var bottom: float = lerpf(image.get_pixel(i.x, i.y + 1).r, image.get_pixel(i.x + 1, i.y + 1).r, f.x)
+			heights[z * side + x] = lerpf(top, bottom, f.y) + lift
+	_floor_centre = centre
+	_floor_shape.map_data = heights
+	_floor.global_position = Vector3(centre.x, 0.0, centre.y)
+
+
 ## Everything that depends on the depth, when it changes on a live node: the globals every material reads, the
 ## floor, the surface mesh's bounds, and the tracks, which were carved into snow of another depth.
 func _on_depth_changed() -> void:
@@ -1018,6 +1191,8 @@ func _on_depth_changed() -> void:
 		return
 	_publish_globals()
 	_floor_centre = Vector2(INF, INF)
+	_ground_centre = Vector2(INF, INF)
+	_ground_texture = null # re-bakes at once, which lays the floor at the new depth over uneven ground
 	_follow_floor()
 	_fit_surface_bounds()
 	clear()
@@ -1055,17 +1230,23 @@ func set_wind(strength: float, direction: Vector3) -> void:
 
 ## Builds the snow mesh as a child of this node, so a level only ever places the one node.
 func _build_surface() -> void:
-	var plane: PlaneMesh = PlaneMesh.new()
-	plane.size = Vector2(surface_size, surface_size)
-	# n quads along a side needs n - 1 interior subdivisions.
-	plane.subdivide_width = maxi(surface_subdivisions - 1, 0)
-	plane.subdivide_depth = maxi(surface_subdivisions - 1, 0)
+	var plane: Mesh = null
+	if surface_rings > 0:
+		plane = _ring_mesh(0, 0)
+	else:
+		var square: PlaneMesh = PlaneMesh.new()
+		square.size = Vector2(surface_size, surface_size)
+		# n quads along a side needs n - 1 interior subdivisions.
+		square.subdivide_width = maxi(surface_subdivisions - 1, 0)
+		square.subdivide_depth = maxi(surface_subdivisions - 1, 0)
+		plane = square
 	# The vertex shader pushes geometry well outside the flat plane's bounds, so the AABB it reports
 	# is wrong and Godot would cull the mesh at grazing angles without this.
-	plane.custom_aabb = AABB(
-		Vector3(-surface_size * 0.5, -snow_depth - 1.0, -surface_size * 0.5),
-		Vector3(surface_size, snow_depth + max_rim_height + 2.0, surface_size)
-	)
+	var half: float = _surface_half()
+	plane.set(&"custom_aabb", AABB(
+		Vector3(-half, -snow_depth - 1.0, -half),
+		Vector3(half * 2.0, snow_depth + max_rim_height + 2.0, half * 2.0)
+	))
 
 	var shader: Shader = load(_SURFACE_SHADER) as Shader
 	_surface_material = ShaderMaterial.new()
@@ -1079,15 +1260,99 @@ func _build_surface() -> void:
 	_surface.extra_cull_margin = snow_depth + max_rim_height + 1.0
 	_surface.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 	add_child(_surface)
+	if surface_rings > 0:
+		var rings: ArrayMesh = _ring_mesh(1, surface_rings)
+		rings.custom_aabb = plane.get(&"custom_aabb")
+		_rings = MeshInstance3D.new()
+		_rings.name = "SnowRings"
+		_rings.mesh = rings
+		_rings.material_override = _surface_material
+		_rings.extra_cull_margin = _surface.extra_cull_margin
+		# Every shadow pass runs the vertex shader again, and these are most of the vertices; the terrain under them
+		# casts the hills' shadows already.
+		_rings.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(_rings)
 	_follow_surface()
 
 
-## Keeps the mesh under the focus, snapped to its own vertex spacing so vertices never swim between
-## displaced heights.
+## Half the width of the whole snow mesh, rings and all.
+func _surface_half() -> float:
+	return surface_size * 0.5 * float(1 << surface_rings)
+
+
+## Levels [param first] to [param last] of the snow mesh as one mesh: level 0 is the fine centre, and each level after
+## it a ring, the grid of the one inside at twice the spacing, less the middle that one already covers. Every other
+## vertex on a level's outer edge falls between two of the next ring's, so it carries in UV2 the offset to its
+## neighbours along the edge and the shader puts it on the line between them: the rings meet without a crack.
+func _ring_mesh(first: int, last: int) -> ArrayMesh:
+	var n: int = maxi(surface_subdivisions / 4 * 4, 4) # a ring's hole is the middle half, so n/2 must be even
+	var s0: float = surface_size / float(n)
+	var vertices: PackedVector3Array = PackedVector3Array()
+	var offsets: PackedVector2Array = PackedVector2Array()
+	var indices: PackedInt32Array = PackedInt32Array()
+	# The vertices on the edge the next ring shares, by position in units of the finest spacing.
+	var shared: Dictionary[Vector2i, int] = {}
+	for level: int in range(first, last + 1):
+		var step: int = 1 << level
+		var half: int = n / 2 * step
+		var hole: int = half / 2 if level > 0 else -1
+		var ids: PackedInt32Array = PackedInt32Array()
+		ids.resize((n + 1) * (n + 1))
+		ids.fill(-1)
+		var next_shared: Dictionary[Vector2i, int] = {}
+		for gz: int in n + 1:
+			for gx: int in n + 1:
+				var x: int = -half + gx * step
+				var z: int = -half + gz * step
+				var inside: bool = absi(x) < hole and absi(z) < hole
+				if inside:
+					continue
+				var key: Vector2i = Vector2i(x, z)
+				var id: int = shared.get(key, -1)
+				if id < 0:
+					id = vertices.size()
+					vertices.append(Vector3(float(x) * s0, 0.0, float(z) * s0))
+					var offset: Vector2 = Vector2.ZERO
+					if level < surface_rings:
+						if (gx == 0 or gx == n) and gz % 2 == 1:
+							offset = Vector2(0.0, float(step) * s0)
+						elif (gz == 0 or gz == n) and gx % 2 == 1:
+							offset = Vector2(float(step) * s0, 0.0)
+					offsets.append(offset)
+				ids[gz * (n + 1) + gx] = id
+				if gx == 0 or gx == n or gz == 0 or gz == n:
+					next_shared[key] = id
+		for cz: int in n:
+			for cx: int in n:
+				var a: int = ids[cz * (n + 1) + cx]
+				var b: int = ids[cz * (n + 1) + cx + 1]
+				var c: int = ids[(cz + 1) * (n + 1) + cx]
+				var d: int = ids[(cz + 1) * (n + 1) + cx + 1]
+				if a < 0 or b < 0 or c < 0 or d < 0:
+					continue # in the hole the ring inside fills
+				# Clockwise seen from above, which is Godot's front face.
+				indices.append_array(PackedInt32Array([a, b, c, b, d, c]))
+		shared = next_shared
+	var normals: PackedVector3Array = PackedVector3Array()
+	normals.resize(vertices.size())
+	normals.fill(Vector3.UP)
+	var arrays: Array = []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = vertices
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	arrays[Mesh.ARRAY_TEX_UV2] = offsets
+	arrays[Mesh.ARRAY_INDEX] = indices
+	var mesh: ArrayMesh = ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
+
+
+## Keeps the mesh under the focus, snapped to its coarsest vertex spacing, which every ring's spacing divides, so no
+## vertex ever swims between displaced heights.
 func _follow_surface() -> void:
 	if _surface == null or not is_instance_valid(_surface):
 		return
-	var spacing: float = surface_size / float(maxi(surface_subdivisions, 1))
+	var spacing: float = surface_size / float(maxi(surface_subdivisions, 1)) * float(1 << surface_rings)
 	var centre: Vector2 = Vector2.ZERO
 	if _focus != null and is_instance_valid(_focus):
 		centre = Vector2(_focus.global_position.x, _focus.global_position.z)
@@ -1096,10 +1361,19 @@ func _follow_surface() -> void:
 		0.0,
 		snappedf(centre.y, spacing)
 	)
+	if _rings != null and is_instance_valid(_rings):
+		_rings.global_position = _surface.global_position
 	if _surface_material != null:
 		_surface_material.set_shader_parameter(&"surface_centre", Vector2(_surface.global_position.x, _surface.global_position.z))
-		_surface_material.set_shader_parameter(&"surface_half", surface_size * 0.5)
+		_surface_material.set_shader_parameter(&"surface_half", _surface_half())
 		_surface_material.set_shader_parameter(&"surface_edge_taper", surface_edge_taper)
+		if has_map():
+			_surface_material.set_shader_parameter(&"use_map_edge", true)
+			_surface_material.set_shader_parameter(&"map_rect_min", map_rect.position)
+			_surface_material.set_shader_parameter(&"map_rect_max", map_rect.end)
+			_surface_material.set_shader_parameter(&"map_origin", map_rect.position)
+			_surface_material.set_shader_parameter(&"map_size", maxf(map_rect.size.x, map_rect.size.y))
+			_surface_material.set_shader_parameter(&"map_texel", map_texel())
 
 
 ## The R, G and B of the deformation texture in the corner, for checking stamps land where intended.
@@ -1184,6 +1458,21 @@ func _init_compute() -> void:
 	# The sampling side never learns a new RID: display stays put for the node's whole life and the
 	# scroll pass copies back into it. Swapping this per frame is what makes tracks flicker.
 	_texture.texture_rd_rid = _display
+
+	# The map's own texture: fixed to the world, so it never scrolls and needs no scratch copy.
+	if has_map():
+		var map_fmt: RDTextureFormat = RDTextureFormat.new()
+		map_fmt.format = fmt.format
+		map_fmt.width = map_resolution
+		map_fmt.height = map_resolution
+		map_fmt.usage_bits = fmt.usage_bits
+		_map_display = _rd.texture_create(map_fmt, RDTextureView.new(), [])
+		_rd.texture_clear(_map_display, Color(0.0, 0.0, 0.0, 0.0), 0, 1, 0, 1)
+		_map_update_set = _rd.uniform_set_create([
+			_image_uniform(_map_display, 0),
+			_buffer_uniform(_stamp_buffer, 1),
+		], _update_shader, 0)
+		_map_texture.texture_rd_rid = _map_display
 	# Publishing the texture itself is deliberately left to the main thread, in _process: a global
 	# shader parameter set from here does not reach any material, and the snow renders flat with no
 	# error to say why.
@@ -1206,7 +1495,7 @@ func _buffer_uniform(buffer: RID, binding: int) -> RDUniform:
 	return uniform
 
 
-func _render_frame(payload: PackedFloat32Array, count: int, delta: float, origin: Vector2, shift: Vector2i) -> void:
+func _render_frame(payload: PackedFloat32Array, count: int, delta: float, origin: Vector2, shift: Vector2i, map_region: Rect2i) -> void:
 	if not _compute_ready:
 		return
 	if shift != Vector2i.ZERO:
@@ -1220,7 +1509,11 @@ func _render_frame(payload: PackedFloat32Array, count: int, delta: float, origin
 		return
 	if count > 0:
 		_rd.buffer_update(_stamp_buffer, 0, payload.size() * 4, payload.to_byte_array())
-	_run_update(count, delta, origin)
+	_run_update(_update_set, count, delta, origin, _texel_size, 0.0, Rect2i(0, 0, resolution, resolution))
+	if _map_update_set.is_valid() and map_region.has_area():
+		# A print narrower than a map texel would fall between texel centres and leave nothing there.
+		var texel: float = map_texel()
+		_run_update(_map_update_set, count, delta, map_rect.position, texel, texel * 0.75, map_region)
 
 
 func _run_scroll(shift: Vector2i) -> void:
@@ -1236,20 +1529,21 @@ func _run_scroll(shift: Vector2i) -> void:
 	_rd.texture_copy(_scratch, _display, Vector3.ZERO, Vector3.ZERO, Vector3(resolution, resolution, 1), 0, 0, 0, 0)
 
 
-func _run_update(count: int, delta: float, origin: Vector2) -> void:
+## Applies the stamps (and refill) to the texture in [param uniform_set], whose min corner is at [param origin] with
+## [param texel] metres a texel, over only the texels in [param region].
+func _run_update(uniform_set: RID, count: int, delta: float, origin: Vector2, texel: float, min_radius: float, region: Rect2i) -> void:
 	# 16 floats, 64 bytes, matching the push_constant block in snow_update.glsl exactly.
 	var push: PackedByteArray = PackedFloat32Array([
-		origin.x, origin.y, _texel_size, delta,
+		origin.x, origin.y, texel, delta,
 		snow_depth, refill_rate_geo, refill_rate_mask, max_rim_height,
-		noise_scale, noise_strength, float(count), 0.0,
-		0.0, 0.0, 0.0, 0.0,
+		noise_scale, noise_strength, float(count), min_radius,
+		float(region.position.x), float(region.position.y), 0.0, 0.0,
 	]).to_byte_array()
-	var groups: int = _group_count()
 	var list: int = _rd.compute_list_begin()
 	_rd.compute_list_bind_compute_pipeline(list, _update_pipeline)
-	_rd.compute_list_bind_uniform_set(list, _update_set, 0)
+	_rd.compute_list_bind_uniform_set(list, uniform_set, 0)
 	_rd.compute_list_set_push_constant(list, push, push.size())
-	_rd.compute_list_dispatch(list, groups, groups, 1)
+	_rd.compute_list_dispatch(list, (region.size.x + _GROUP_SIZE - 1) / _GROUP_SIZE, (region.size.y + _GROUP_SIZE - 1) / _GROUP_SIZE, 1)
 	_rd.compute_list_end()
 
 
@@ -1260,16 +1554,20 @@ func _group_count() -> int:
 func _render_clear() -> void:
 	if _compute_ready:
 		_rd.texture_clear(_display, Color(0.0, 0.0, 0.0, 0.0), 0, 1, 0, 1)
+		if _map_display.is_valid():
+			_rd.texture_clear(_map_display, Color(0.0, 0.0, 0.0, 0.0), 0, 1, 0, 1)
 
 
 func _free_compute() -> void:
 	if _rd == null:
 		return
 	# Uniform sets first: they reference the textures and the buffer.
-	for rid: RID in [_update_set, _scroll_set, _update_pipeline, _scroll_pipeline, _update_shader, _scroll_shader, _stamp_buffer, _display, _scratch]:
+	for rid: RID in [_update_set, _map_update_set, _scroll_set, _update_pipeline, _scroll_pipeline, _update_shader, _scroll_shader, _stamp_buffer, _display, _scratch, _map_display]:
 		if rid.is_valid():
 			_rd.free_rid(rid)
 	_update_set = RID()
+	_map_update_set = RID()
+	_map_display = RID()
 	_scroll_set = RID()
 	_update_pipeline = RID()
 	_scroll_pipeline = RID()
