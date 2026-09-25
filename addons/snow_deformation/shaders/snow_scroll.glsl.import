@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://cqdqebstdnm7s"
+path="res://.godot/imported/snow_scroll.glsl-0637aef15d70d1784424dc37f9994d7e.res"
+
+[deps]
+
+source_file="res://addons/snow_deformation/shaders/snow_scroll.glsl"
+dest_files=["res://.godot/imported/snow_scroll.glsl-0637aef15d70d1784424dc37f9994d7e.res"]
+
+[params]
+

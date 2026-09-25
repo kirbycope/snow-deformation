@@ -1,0 +1,224 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://addons/snow_deformation/scenes/demo/demo.gd" id="1_demo"]
+[ext_resource type="Script" path="res://addons/snow_deformation/snow_deformation.gd" id="2_snow"]
+[ext_resource type="Script" path="res://addons/snow_deformation/terrain_height_flat.gd" id="3_flat"]
+[ext_resource type="PackedScene" path="res://addons/3d_player_controller/scenes/player.tscn" id="4_player"]
+[ext_resource type="Script" path="res://addons/snow_deformation/foot_stamper.gd" id="5_foot"]
+[ext_resource type="Script" path="res://addons/snow_deformation/blade_stamper.gd" id="6_blade"]
+[ext_resource type="PackedScene" path="res://addons/weather_fx/scenes/weather_fx.tscn" id="7_weather"]
+
+[sub_resource type="ProceduralSkyMaterial" id="SkyMaterial"]
+sky_top_color = Color(0.32, 0.45, 0.66, 1)
+sky_horizon_color = Color(0.78, 0.76, 0.74, 1)
+ground_bottom_color = Color(0.72, 0.76, 0.82, 1)
+ground_horizon_color = Color(0.78, 0.76, 0.74, 1)
+sun_angle_max = 6.0
+sun_curve = 0.08
+
+[sub_resource type="Sky" id="Sky"]
+sky_material = SubResource("SkyMaterial")
+
+[sub_resource type="Environment" id="Environment"]
+background_mode = 2
+sky = SubResource("Sky")
+ambient_light_source = 3
+ambient_light_sky_contribution = 0.85
+ambient_light_energy = 0.9
+tonemap_mode = 3
+tonemap_white = 4.0
+ssao_enabled = true
+ssao_radius = 0.6
+ssao_intensity = 1.6
+ssao_power = 2.0
+ssao_detail = 1.0
+ssil_enabled = false
+sdfgi_enabled = false
+glow_enabled = true
+glow_intensity = 0.4
+glow_bloom = 0.05
+
+[sub_resource type="PlaneMesh" id="GroundMesh"]
+size = Vector2(400, 400)
+
+[sub_resource type="StandardMaterial3D" id="GroundMaterial"]
+albedo_color = Color(0.9, 0.92, 0.96, 1)
+roughness = 0.7
+
+[sub_resource type="BoxShape3D" id="GroundShape"]
+size = Vector3(400, 1, 400)
+
+[sub_resource type="BoxMesh" id="BladeMesh"]
+size = Vector3(0.05, 0.012, 1.1)
+
+[sub_resource type="StandardMaterial3D" id="BladeMaterial"]
+albedo_color = Color(0.72, 0.75, 0.8, 1)
+metallic = 0.9
+metallic_specular = 0.8
+roughness = 0.25
+
+[sub_resource type="SphereMesh" id="BallMesh"]
+radius = 0.5
+height = 1.0
+
+[sub_resource type="StandardMaterial3D" id="BallMaterial"]
+albedo_color = Color(0.85, 0.2, 0.15, 1)
+roughness = 0.4
+
+[sub_resource type="SphereShape3D" id="BallShape"]
+radius = 0.5
+
+[sub_resource type="Resource" id="FlatTerrain"]
+script = ExtResource("3_flat")
+terrain_y = 0.0
+
+[node name="SnowDemo" type="Node3D" node_paths=PackedStringArray("snow", "player", "sword", "readout", "weather")]
+script = ExtResource("1_demo")
+snow = NodePath("SnowDeformation")
+player = NodePath("Player")
+sword = NodePath("Player/Sword")
+readout = NodePath("HUD/Readout")
+weather = NodePath("WeatherFX")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.7071068, -0.14904977, 0.6910048, 0, 0.9776616, 0.2108932, -0.7071068, -0.14904977, 0.6910048, 0, 12, 0)
+light_energy = 1.4
+light_angular_distance = 0.5
+shadow_enabled = true
+shadow_bias = 0.04
+shadow_normal_bias = 2.0
+shadow_blur = 1.0
+directional_shadow_mode = 2
+directional_shadow_split_1 = 0.04
+directional_shadow_split_2 = 0.12
+directional_shadow_split_3 = 0.35
+directional_shadow_fade_start = 0.9
+directional_shadow_max_distance = 60.0
+
+[node name="Ground" type="StaticBody3D" parent="."]
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Ground"]
+mesh = SubResource("GroundMesh")
+material_override = SubResource("GroundMaterial")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Ground"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.5, 0)
+shape = SubResource("GroundShape")
+
+[node name="SnowDeformation" type="Node3D" parent="."]
+script = ExtResource("2_snow")
+resolution = 2048
+world_size = 48.0
+snow_depth = 0.35
+max_rim_height = 0.12
+terrain_height_provider = SubResource("FlatTerrain")
+refill_rate_geo = 0.0
+refill_rate_mask = 0.0
+noise_scale = 12.0
+noise_strength = 0.08
+max_stamps_per_frame = 128
+create_surface = true
+surface_size = 32.0
+surface_subdivisions = 256
+debug_overlay = false
+
+[node name="Player" parent="." instance=ExtResource("4_player")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+enable_stamina = true
+
+[node name="FootStamper" type="Node" parent="Player"]
+script = ExtResource("5_foot")
+skeleton_path = NodePath("../PlayerModel/Armature/GeneralSkeleton")
+foot_bones = Array[StringName]([&"LeftFoot", &"RightFoot"])
+half_width = 0.06
+half_length = 0.14
+sole_offset = 0.08
+forward_offset = 0.03
+contact_margin = 0.02
+rim_factor = 0.35
+
+[node name="Sword" type="Node3D" parent="Player"]
+transform = Transform3D(1, 0, 0, 0, 0.8191521, -0.5735765, 0, 0.5735765, 0.8191521, 0.35, 1.1, 0)
+
+[node name="Blade" type="MeshInstance3D" parent="Player/Sword"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.55)
+mesh = SubResource("BladeMesh")
+material_override = SubResource("BladeMaterial")
+
+[node name="Base" type="Marker3D" parent="Player/Sword"]
+
+[node name="Tip" type="Marker3D" parent="Player/Sword"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -1.1)
+
+[node name="BladeStamper" type="Node" parent="Player/Sword"]
+script = ExtResource("6_blade")
+base_marker = NodePath("../Base")
+tip_marker = NodePath("../Tip")
+blade_radius = 0.03
+max_substeps = 16
+rim_factor = 0.3
+
+[node name="WeatherFX" parent="." node_paths=PackedStringArray("sun_light", "world_environment", "target_node") instance=ExtResource("7_weather")]
+current_biome = 2
+force_weather = true
+manual_weather = 6
+manual_time_of_day = 7.5
+sun_light = NodePath("../Sun")
+world_environment = NodePath("../WorldEnvironment")
+target_node = NodePath("../Player")
+wind_direction = Vector3(0.8, 0, 0.6)
+wind_strength_multiplier = 2.0
+
+[node name="PhysicsProps" type="Node3D" parent="."]
+
+[node name="Ball1" type="RigidBody3D" parent="PhysicsProps"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.5, 1.2, 2.5)
+mass = 0.5
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="PhysicsProps/Ball1"]
+mesh = SubResource("BallMesh")
+material_override = SubResource("BallMaterial")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="PhysicsProps/Ball1"]
+shape = SubResource("BallShape")
+
+[node name="Ball2" type="RigidBody3D" parent="PhysicsProps"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3.6, 1.6, 1.4)
+mass = 0.5
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="PhysicsProps/Ball2"]
+mesh = SubResource("BallMesh")
+material_override = SubResource("BallMaterial")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="PhysicsProps/Ball2"]
+shape = SubResource("BallShape")
+
+[node name="Ball3" type="RigidBody3D" parent="PhysicsProps"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.6, 2.0, 3.4)
+mass = 0.5
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="PhysicsProps/Ball3"]
+mesh = SubResource("BallMesh")
+material_override = SubResource("BallMaterial")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="PhysicsProps/Ball3"]
+shape = SubResource("BallShape")
+
+[node name="HUD" type="CanvasLayer" parent="."]
+
+[node name="Readout" type="Label" parent="HUD"]
+anchors_preset = 2
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 16.0
+offset_top = -128.0
+offset_right = 640.0
+offset_bottom = -16.0
+grow_vertical = 0
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 0.7)
+theme_override_constants/outline_size = 6
+vertical_alignment = 2

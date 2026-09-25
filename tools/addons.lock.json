@@ -1,0 +1,30 @@
+{
+  "3d_player_controller": {
+    "commit": "388953bbbb50a28beb281d30221674431fb8e48a",
+    "pulled": "2026-09-25T13:50:26Z",
+    "ref": "main",
+    "repo": "https://github.com/kirbycope/godot-3d-player-controller-addon.git",
+    "subject": "A host and a client each keep their own save"
+  },
+  "controls": {
+    "commit": "9d51a77dd7c9b94c94f4518e892c0e3b98a3ff4f",
+    "pulled": "2026-09-25T13:50:37Z",
+    "ref": "main",
+    "repo": "https://github.com/kirbycope/godot-controls.git",
+    "subject": "A pull that changes nothing leaves addons.lock.json alone"
+  },
+  "gut": {
+    "commit": "aeb5d4f3f7f0a6c9b5e178876d6c99b791fda605",
+    "pulled": "2026-09-25T13:50:52Z",
+    "ref": "v9.7.1",
+    "repo": "https://github.com/bitwes/Gut.git",
+    "subject": "Version bump, documentation for 9.7.1 release (#847)"
+  },
+  "weather_fx": {
+    "commit": "6fad4fb30d0385917337744938f28b896e81e8ec",
+    "pulled": "2026-09-25T13:50:48Z",
+    "ref": "main",
+    "repo": "https://github.com/kirbycope/weather-fx.git",
+    "subject": "The wind textures import VRAM compressed, as the editor promoted them in use"
+  }
+}

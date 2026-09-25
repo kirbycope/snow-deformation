@@ -1,0 +1,94 @@
+; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
+
+config_version=5
+
+[application]
+
+config/name="Snow Deformation"
+run/main_scene="res://addons/snow_deformation/scenes/demo/demo.tscn"
+config/features=PackedStringArray("4.8", "Forward Plus")
+
+[display]
+
+window/size/viewport_width=1280
+window/size/viewport_height=800
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/snow_deformation/plugin.cfg")
+
+[importer_defaults]
+
+texture={
+&"compress/mode": 0,
+&"detect_3d/compress_to": 1,
+&"process/size_limit": 0
+}
+
+[input_devices]
+
+joypads/ignore_joypad_on_unfocused_application=true
+pointing/emulate_mouse_from_touch=false
+
+[layer_names]
+
+3d_physics/layer_10="Weapons"
+3d_physics/layer_11="Hittable"
+
+[physics]
+
+3d/physics_engine="Jolt Physics"
+
+[rendering]
+
+rendering_device/d3d12/max_resource_descriptors=1000000
+rendering_device/driver.windows="d3d12"
+
+[shader_globals]
+
+weather_wind_strength={
+"type": "float",
+"value": 0.0
+}
+weather_wind_direction={
+"type": "vec3",
+"value": Vector3(1, 0, 0)
+}
+weather_precipitation_strength={
+"type": "float",
+"value": 0.0
+}
+weather_foliage_tint={
+"type": "color",
+"value": Color(1, 1, 1, 1)
+}
+weather_grass_tint={
+"type": "color",
+"value": Color(1, 1, 1, 1)
+}
+snow_deform_tex={
+"type": "sampler2D",
+"value": ""
+}
+snow_deform_origin={
+"type": "vec2",
+"value": Vector2(0, 0)
+}
+snow_deform_size={
+"type": "float",
+"value": 48.0
+}
+snow_deform_texel={
+"type": "float",
+"value": 0.046875
+}
+snow_depth={
+"type": "float",
+"value": 0.35
+}

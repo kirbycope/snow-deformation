@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://03wsds4dltnx"
+path="res://.godot/imported/snow_update.glsl-e4fa1b5e5f502b6555f94d58e492bbf3.res"
+
+[deps]
+
+source_file="res://addons/snow_deformation/shaders/snow_update.glsl"
+dest_files=["res://.godot/imported/snow_update.glsl-e4fa1b5e5f502b6555f94d58e492bbf3.res"]
+
+[params]
+
