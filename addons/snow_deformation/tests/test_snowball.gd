@@ -224,11 +224,22 @@ func test_something_else_knocks_a_stack_loose_and_a_slow_touch_does_not() -> voi
 	leaning.linear_velocity = Vector3(0.1, 0.0, 0.0)
 	base.call("_on_body_entered", leaning)
 	assert_true(head.lock_rotation, "Something barely moving leaves it standing")
+	var gentle: Snowball = _ball()
+	gentle.global_position = Vector3(5.0, 3.0, 5.0)
+	gentle.linear_velocity = Vector3(0.3, 0.0, 0.0)
+	head.call("_on_body_entered", gentle)
+	assert_true(head.lock_rotation, "Another snowball set down on it gently stacks")
 	var kick: RigidBody3D = autofree(RigidBody3D.new())
 	kick.linear_velocity = Vector3(2.0, 0.0, 0.0)
 	base.call("_on_body_entered", kick)
 	assert_false(base.lock_rotation, "A kick knocks the base loose")
 	assert_false(head.lock_rotation, "and the head on it, so the stack can topple")
+	var lone: Snowball = _ball()
+	var thrown: Snowball = _ball()
+	thrown.global_position = Vector3(-5.0, 3.0, 5.0)
+	thrown.linear_velocity = Vector3(8.0, 0.0, 0.0)
+	lone.call("_on_body_entered", thrown)
+	assert_gt(lone._free_until, 0.0, "One thrown at it knocks it loose")
 	var wall: StaticBody3D = autofree(StaticBody3D.new())
 	var other: Snowball = _ball()
 	other.call("_on_body_entered", wall)
@@ -258,3 +269,15 @@ func test_a_hard_landing_breaks_it_into_clumps_and_a_gentle_one_does_not() -> vo
 	for child: Node in get_children():
 		if child.name.begins_with("SnowClump"):
 			child.free()
+
+
+func test_shoving_a_ball_does_not_break_it() -> void:
+	await wait_physics_frames(2)
+	var top: float = _snow.get_floor_height(Vector2.ZERO)
+	var ball: Snowball = _ball()
+	ball.radius = 0.3
+	ball.global_position = Vector3(0.0, top + 0.3, 0.0)
+	await wait_seconds(0.5)
+	ball.apply_central_impulse(Vector3(5.0, 0.0, 0.0) * ball.mass)
+	await wait_physics_frames(5)
+	assert_true(is_instance_valid(ball), "Set moving at 5 m/s from rest, as a running Player shoves it, it stays whole")

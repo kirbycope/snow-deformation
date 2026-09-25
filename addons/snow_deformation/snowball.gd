@@ -30,10 +30,10 @@ extends RigidBody3D
 ## came near, is lifted back on top of it.
 ##
 ## A stack holds only until something disturbs it. Anything but another snowball moving into a ball faster than
-## [member knock_speed] knocks it loose, and a ball in a stack that starts to move (the snow ploughed out from under
+## [member knock_speed] knocks it loose, as does another snowball thrown at it faster than [member thrown_speed], and a ball in a stack that starts to move (the snow ploughed out from under
 ## the bottom one, which drops the floor it stands on) is knocked loose too; either frees the whole stack to roll for
-## [member knocked_time], so it topples as it would. A ball that lands or is struck harder than [member break_speed]
-## falls apart ([method shatter]): clumps of it scatter and lie in the snow for [member clump_life] seconds, and the
+## [member knocked_time], so it topples as it would. A ball stopped short, its speed falling by [member break_speed] in
+## a step (a landing, a wall), falls apart ([method shatter]): clumps of it scatter and lie in the snow for [member clump_life] seconds, and the
 ## authority tells every peer, so it breaks everywhere.
 ##
 ## Everything but the growth runs on every peer. The growth runs on the body's multiplayer authority,
@@ -53,12 +53,15 @@ extends RigidBody3D
 @export_range(0.0, 1.0, 0.01) var rolling_resistance: float = 0.25
 ## How fast anything but another snowball has to be moving into a ball to knock it loose from a stack.
 @export_range(0.0, 5.0, 0.05, "suffix:m/s") var knock_speed: float = 0.5
+## Another snowball knocks it loose only when it comes in faster than this: thrown, not set down on it to stack.
+@export_range(0.0, 20.0, 0.1, "suffix:m/s") var thrown_speed: float = 2.0
 ## A ball held in a stack that starts moving faster than this has lost what it stood on, so it is knocked loose.
 @export_range(0.0, 5.0, 0.05, "suffix:m/s") var hold_speed: float = 0.5
 ## Seconds a knocked ball is free to roll before it may hold on another again.
 @export_range(0.0, 5.0, 0.1, "suffix:s") var knocked_time: float = 1.5
-## A landing or a blow that changes its speed by this much in one physics step breaks it apart. 0 never breaks.
-@export_range(0.0, 20.0, 0.1, "suffix:m/s") var break_speed: float = 3.0
+## Stopped this suddenly (its speed falling by this much in one physics step: a landing, a wall, a thrown ball's
+## target) it breaks apart. Being set moving, shoved or struck never breaks it. 0 never breaks.
+@export_range(0.0, 20.0, 0.1, "suffix:m/s") var break_speed: float = 2.5
 ## Seconds the clumps of a broken ball lie in the snow before they melt away.
 @export_range(1.0, 120.0, 1.0, "suffix:s") var clump_life: float = 20.0
 ## Packed snow, in kilograms per cubic metre. The mass is this times the ball's volume.
@@ -203,9 +206,10 @@ func _integrate_forces(state: PhysicsDirectBodyState3D) -> void:
 	if Engine.is_editor_hint():
 		return
 	_on_snow = false
-	# A landing or a blow shows as the speed changing sharply between two steps while touching something.
+	# Stopped short: its speed fell sharply between two steps while touching something. Snow breaks from the stop, not
+	# from being shoved, so a Player walking into a snowman knocks it over without breaking the base.
 	if break_speed > 0.0 and not _was_frozen and state.get_contact_count() > 0 and is_multiplayer_authority() \
-			and (state.linear_velocity - _last_velocity).length() >= break_speed:
+			and _last_velocity.length() - state.linear_velocity.length() >= break_speed:
 		shatter.rpc()
 		return
 	_last_velocity = state.linear_velocity
@@ -258,7 +262,10 @@ func _on_body_entered(body: Node) -> void:
 	if body is Snowball:
 		if not _touching.has(body):
 			_touching.append(body as Snowball)
-		_hold_still()
+		if _speed_of(body) >= thrown_speed:
+			knock()
+		else:
+			_hold_still()
 	elif SnowDeformation._moves(body) and _speed_of(body) >= knock_speed:
 		knock()
 

@@ -216,11 +216,14 @@ on friction: a snowman is stacked with nothing more than a pickup that can carry
 as the player controller's own pickup and hold. `max_radius` caps the growth.
 
 A stack holds only until something disturbs it. Anything but another snowball moving into a ball faster than
-`knock_speed` (0.5 m/s: a Player walking into it, a thrown ball, a swung sword) knocks it loose, and so does
+`knock_speed` (0.5 m/s: a Player walking into it, a swung sword, a round) knocks it loose, as does another
+snowball thrown at it faster than `thrown_speed` (2 m/s, where one set down on it to stack is slower), and so does
 a ball in a stack that starts moving faster than `hold_speed`, which is what happens when the snow is
 ploughed out from under the bottom one and the floor it stands on drops (next section). Either frees the whole
-stack to roll for `knocked_time` (`Snowball.knock()`), so it topples the way it would. A ball that lands or is
-struck hard enough to change its speed by `break_speed` (3 m/s) in one physics step falls apart
+stack to roll for `knocked_time` (`Snowball.knock()`), so it topples the way it would. A ball stopped short, its
+speed falling by `break_speed` (2.5 m/s) in one physics step (a landing, a wall, a thrown ball reaching what it
+was thrown at), falls apart; being set moving, shoved or struck never breaks it, so a Player walking into a
+snowman knocks the head off without breaking the base. It falls apart
 (`Snowball.shatter()`, with a `shattered` signal): half its snow scatters as a handful of clumps, plain rigid
 bodies on no layer of their own that lie in the snow for `clump_life` seconds and melt away, and the rest goes
 up as a spray. A head knocked off a snowman breaks where it lands; one set down by hand does not. Only the
