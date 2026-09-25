@@ -1,0 +1,19 @@
+[remap]
+
+importer="oggvorbisstr"
+type="AudioStreamOggVorbis"
+uid="uid://x8ob1a7x0tam"
+path="res://.godot/imported/snow_crunch_31.ogg-8536cd138caebbe87a014408d5c6bf2d.oggvorbisstr"
+
+[deps]
+
+source_file="res://addons/snow_deformation/assets/audio/gravitysound/Snow Sound Effects/footsteps/snow_crunch_31.ogg"
+dest_files=["res://.godot/imported/snow_crunch_31.ogg-8536cd138caebbe87a014408d5c6bf2d.oggvorbisstr"]
+
+[params]
+
+loop=false
+loop_offset=0
+bpm=0
+beat_count=0
+bar_beats=4

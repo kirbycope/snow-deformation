@@ -1,0 +1,19 @@
+[remap]
+
+importer="oggvorbisstr"
+type="AudioStreamOggVorbis"
+uid="uid://c4tba4ljo43ke"
+path="res://.godot/imported/shovel_snow_4.ogg-dd2758519177fd16b586a01d9e86c6ad.oggvorbisstr"
+
+[deps]
+
+source_file="res://addons/snow_deformation/assets/audio/gravitysound/Snow Sound Effects/crush/shovel_snow_4.ogg"
+dest_files=["res://.godot/imported/shovel_snow_4.ogg-dd2758519177fd16b586a01d9e86c6ad.oggvorbisstr"]
+
+[params]
+
+loop=false
+loop_offset=0
+bpm=0
+beat_count=0
+bar_beats=4

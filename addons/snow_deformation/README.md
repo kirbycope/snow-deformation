@@ -83,8 +83,9 @@ frame, and when more are in the snow than that the widest and nearest win, again
 
 ## Sound
 
-The addon ships no audio of its own; it exposes slots and stays silent until something is put in them.
-Give `FootStamper.footstep_sound` and `SnowDeformation.press_sound` an `AudioStreamRandomizer` holding
+The slots stay silent until something is put in them. The addon ships two ready to use,
+`resources/snow_footsteps.tres` and `resources/snow_crush.tres`, built from Gravity Sound's Snow Sound
+Effects (see `CREDITS.md`). Give `FootStamper.footstep_sound` and `SnowDeformation.press_sound` an `AudioStreamRandomizer` holding
 several takes and it builds the `AudioStreamPlayer3D` voices itself.
 
 A footstep fires on the frame a foot **arrives** in the snow, not every frame it stays there: a planted
@@ -187,7 +188,7 @@ it ploughs a trough with berms down both sides.
 - **F2** wipes every track.
 - **F3** lets the falling snow fill tracks back in, at a rate following Weather FX's precipitation.
 
-The demo is silent: the addon carries no audio, and its sound slots are left empty.
+Footsteps and the crush of shoved snow use the addon's own `snow_footsteps.tres` and `snow_crush.tres`.
 
 ## Tests
 
@@ -197,4 +198,4 @@ global it reads is declared. They run headless, where the compute half is off by
 
 ## Licence
 
-MIT. See `LICENSE`. Third-party attributions, of which there are none, would be in `CREDITS.md`.
+MIT. See `LICENSE`. Third-party attributions are in `CREDITS.md`.

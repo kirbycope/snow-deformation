@@ -1,0 +1,25 @@
+[gd_resource type="AudioStreamRandomizer" format=3]
+
+[ext_resource type="AudioStream" path="res://addons/snow_deformation/assets/audio/gravitysound/Snow Sound Effects/footsteps/snow_crunch_18.ogg" id="1_s18"]
+[ext_resource type="AudioStream" path="res://addons/snow_deformation/assets/audio/gravitysound/Snow Sound Effects/footsteps/snow_crunch_23.ogg" id="2_s23"]
+[ext_resource type="AudioStream" path="res://addons/snow_deformation/assets/audio/gravitysound/Snow Sound Effects/footsteps/snow_crunch_24.ogg" id="3_s24"]
+[ext_resource type="AudioStream" path="res://addons/snow_deformation/assets/audio/gravitysound/Snow Sound Effects/footsteps/snow_crunch_26.ogg" id="4_s26"]
+[ext_resource type="AudioStream" path="res://addons/snow_deformation/assets/audio/gravitysound/Snow Sound Effects/footsteps/snow_crunch_29.ogg" id="5_s29"]
+[ext_resource type="AudioStream" path="res://addons/snow_deformation/assets/audio/gravitysound/Snow Sound Effects/footsteps/snow_crunch_30.ogg" id="6_s30"]
+[ext_resource type="AudioStream" path="res://addons/snow_deformation/assets/audio/gravitysound/Snow Sound Effects/footsteps/snow_crunch_31.ogg" id="7_s31"]
+[ext_resource type="AudioStream" path="res://addons/snow_deformation/assets/audio/gravitysound/Snow Sound Effects/footsteps/snow_crunch_32.ogg" id="8_s32"]
+
+[resource]
+resource_name = "Snow Footsteps"
+playback_mode = 1
+random_pitch = 1.12
+random_volume_offset_db = 2.5
+streams_count = 8
+stream_0/stream = ExtResource("1_s18")
+stream_1/stream = ExtResource("2_s23")
+stream_2/stream = ExtResource("3_s24")
+stream_3/stream = ExtResource("4_s26")
+stream_4/stream = ExtResource("5_s29")
+stream_5/stream = ExtResource("6_s30")
+stream_6/stream = ExtResource("7_s31")
+stream_7/stream = ExtResource("8_s32")

@@ -7,6 +7,8 @@
 [ext_resource type="Script" path="res://addons/snow_deformation/foot_stamper.gd" id="5_foot"]
 [ext_resource type="Script" path="res://addons/snow_deformation/blade_stamper.gd" id="6_blade"]
 [ext_resource type="PackedScene" path="res://addons/weather_fx/scenes/weather_fx.tscn" id="7_weather"]
+[ext_resource type="AudioStream" path="res://addons/snow_deformation/resources/snow_footsteps.tres" id="8_steps"]
+[ext_resource type="AudioStream" path="res://addons/snow_deformation/resources/snow_crush.tres" id="9_crush"]
 
 [sub_resource type="ProceduralSkyMaterial" id="SkyMaterial"]
 sky_top_color = Color(0.32, 0.45, 0.66, 1)
@@ -120,6 +122,8 @@ refill_rate_mask = 0.0
 noise_scale = 12.0
 noise_strength = 0.08
 max_stamps_per_frame = 128
+press_sound = ExtResource("9_crush")
+press_volume_db = -5.0
 create_surface = true
 surface_size = 32.0
 surface_subdivisions = 256
@@ -139,6 +143,8 @@ sole_offset = 0.08
 forward_offset = 0.03
 contact_margin = 0.02
 rim_factor = 0.35
+footstep_sound = ExtResource("8_steps")
+footstep_volume_db = -3.0
 
 [node name="Sword" type="Node3D" parent="Player"]
 transform = Transform3D(1, 0, 0, 0, 0.8191521, -0.5735765, 0, 0.5735765, 0.8191521, 0.35, 1.1, 0)
