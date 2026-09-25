@@ -255,6 +255,15 @@ func test_a_blade_held_clear_of_the_snow_cuts_nothing() -> void:
 	assert_eq(_snow.stamps_total, before, "and nothing is carved")
 
 
+func test_a_hidden_body_presses_nothing() -> void:
+	var down: Basis = Basis(Vector3.RIGHT, deg_to_rad(90.0))
+	var body: AnimatableBody3D = _sword(Transform3D(down, Vector3(0.0, 0.9, 0.0)))
+	body.hide()
+	var before: int = _snow.stamps_total
+	assert_false(_snow.call("_press_body", body), "A pickup already taken is hidden, not freed, and cuts nothing")
+	assert_eq(_snow.stamps_total, before, "however deep it sits")
+
+
 func test_a_fast_slash_is_swept_between_frames() -> void:
 	var down: Basis = Basis(Vector3.RIGHT, deg_to_rad(90.0)) # Blade pointing straight down.
 	var body: AnimatableBody3D = _sword(Transform3D(down, Vector3(0.0, 0.9, 0.0)))

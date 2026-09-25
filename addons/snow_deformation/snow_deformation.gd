@@ -414,6 +414,11 @@ func _physics_process(delta: float) -> void:
 ## physics frame so a sword slash, which covers metres in a couple of frames, cuts one continuous
 ## gouge rather than a dotted line. True when any part of it was below the surface.
 func _press_body(body: Node3D) -> bool:
+	if not body.is_visible_in_tree():
+		# A pickup already taken, or a weapon put away, presses nothing, and must not sweep a cut from
+		# wherever it was hidden once it is shown again.
+		_press_previous.erase(body)
+		return false
 	var now: Array[Dictionary] = _segments(body as CollisionObject3D, press_radius_fallback)
 	var before: Array = _press_previous.get(body, [])
 	_press_previous[body] = now
