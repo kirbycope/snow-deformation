@@ -371,6 +371,34 @@ func test_leaving_the_snow_forgets_where_a_body_was_last_heard() -> void:
 #endregion
 
 
+#region Packed snow floor
+
+func test_the_floor_sits_at_the_snow_surface_less_the_sink() -> void:
+	assert_almost_eq(_snow.get_floor_height(Vector2(3.0, -2.0)), 0.4 - _snow.floor_sink, 0.0001, "A body riding on it sinks floor_sink into the snow")
+
+
+func test_the_floor_is_on_its_own_layer_and_covers_the_window() -> void:
+	var floor_body: StaticBody3D = _snow.get_node_or_null("SnowFloor") as StaticBody3D
+	assert_not_null(floor_body, "The manager lays a floor")
+	assert_eq(floor_body.collision_layer, _snow.floor_layer, "on the floor layer alone, so feet and beach balls still sink through")
+	assert_eq(floor_body.collision_mask, 0, "and it watches nothing")
+	var holder: CollisionShape3D = floor_body.get_child(0) as CollisionShape3D
+	var map: HeightMapShape3D = holder.shape as HeightMapShape3D
+	assert_gte(float(map.map_width - 1) * holder.scale.x, _snow.world_size, "It spans the whole window")
+	assert_almost_eq(map.map_data[0], _snow.get_floor_height(Vector2.ZERO), 0.0001, "at the floor height")
+	assert_true(_snow.is_floor(floor_body), "and the manager can say it is its floor")
+
+
+func test_no_floor_layer_lays_no_floor() -> void:
+	var bare: SnowDeformation = MANAGER.new()
+	bare.floor_layer = 0
+	bare.create_surface = false
+	add_child_autofree(bare)
+	assert_null(bare.get_node_or_null("SnowFloor"), "floor_layer 0 turns it off")
+
+#endregion
+
+
 #region Finding the manager
 
 func test_a_stamper_finds_the_manager_above_it_in_the_tree() -> void:

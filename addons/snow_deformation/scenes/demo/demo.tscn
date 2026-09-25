@@ -9,6 +9,8 @@
 [ext_resource type="AudioStream" path="res://addons/snow_deformation/resources/snow_footsteps.tres" id="8_steps"]
 [ext_resource type="AudioStream" path="res://addons/snow_deformation/resources/snow_crush.tres" id="9_crush"]
 
+[ext_resource type="PackedScene" path="res://addons/snow_deformation/scenes/snowball.tscn" id="13_snowball"]
+
 [sub_resource type="ProceduralSkyMaterial" id="SkyMaterial"]
 sky_top_color = Color(0.32, 0.45, 0.66, 1)
 sky_horizon_color = Color(0.78, 0.76, 0.74, 1)
@@ -133,6 +135,17 @@ contact_margin = 0.02
 rim_factor = 0.35
 footstep_sound = ExtResource("8_steps")
 footstep_volume_db = -3.0
+
+[node name="Snowballs" type="Node3D" parent="."]
+
+[node name="Snowball1" parent="Snowballs" instance=ExtResource("13_snowball")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2, 0.5, -1.5)
+
+[node name="Snowball2" parent="Snowballs" instance=ExtResource("13_snowball")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2.6, 0.5, -0.6)
+
+[node name="Snowball3" parent="Snowballs" instance=ExtResource("13_snowball")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1.4, 0.5, -0.4)
 
 [node name="WeatherFX" parent="." node_paths=PackedStringArray("sun_light", "world_environment", "target_node") instance=ExtResource("7_weather")]
 current_biome = 2

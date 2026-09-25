@@ -122,6 +122,18 @@ const _OVERLAY_SIZE: Vector2 = Vector2(256.0, 256.0)
 ## Crushes that may be heard at once. Past this the quietest are simply not played.
 @export_range(1, 12, 1) var press_voices: int = 4
 
+@export_group("Packed snow floor")
+## Physics layers of a collider laid on the snow's surface. A body that masks one of them rides on the
+## snow, as a [Snowball] or a sled should; everything else (feet, hooves, a beach ball, a round) sinks
+## through to the ground underneath and presses the snow on the way. 0 lays no floor.
+@export_flags_3d_physics var floor_layer: int = 1 << 12
+## How far into the snow the floor sits below its surface: how much a body riding on it sinks.
+@export_range(0.0, 0.3, 0.005, "suffix:m") var floor_sink: float = 0.03
+## Spacing of the floor's height samples. Only matters over uneven ground.
+@export_range(0.25, 4.0, 0.25, "suffix:m") var floor_cell: float = 1.0
+## How far the focus moves before the floor is rebuilt around it. It covers the whole window plus this.
+@export_range(1.0, 16.0, 1.0, "suffix:m") var floor_step: float = 4.0
+
 @export_group("Debug")
 ## Show the deformation texture in the corner of the screen.
 @export var debug_overlay: bool = false
@@ -153,6 +165,9 @@ var _surface: MeshInstance3D = null
 var _surface_material: ShaderMaterial = null
 var _overlay: TextureRect = null
 var _press_area: Area3D = null
+var _floor: StaticBody3D = null
+var _floor_shape: HeightMapShape3D = null
+var _floor_centre: Vector2 = Vector2(INF, INF)
 ## Bodies currently inside the press area, and the radius and underside each one was measured at.
 var _pressers: Array[Node3D] = []
 var _press_shape: Dictionary[Node3D, Vector2] = {}
@@ -202,6 +217,7 @@ func _ready() -> void:
 
 	_resolve_focus()
 	_build_press_area()
+	_build_floor()
 	if create_surface:
 		_build_surface()
 	_snap_origin(true)
@@ -241,6 +257,7 @@ func _process(delta: float) -> void:
 	if create_surface:
 		_follow_surface()
 	_follow_press_area()
+	_follow_floor()
 	if scrolled:
 		_publish_globals()
 	if _overlay != null:
@@ -750,6 +767,68 @@ func _publish_globals() -> void:
 	RenderingServer.global_shader_parameter_set(&"snow_deform_size", world_size)
 	RenderingServer.global_shader_parameter_set(&"snow_deform_texel", _texel_size)
 	RenderingServer.global_shader_parameter_set(&"snow_depth", snow_depth)
+
+#endregion
+
+#region Packed snow floor
+
+## Lays the floor a [Snowball] rides on: a heightmap over the window at the snow's surface less
+## [member floor_sink], on [member floor_layer] alone, so only bodies that ask for it stand on it.
+func _build_floor() -> void:
+	if floor_layer == 0:
+		return
+	_floor = StaticBody3D.new()
+	_floor.name = "SnowFloor"
+	_floor.collision_layer = floor_layer
+	_floor.collision_mask = 0
+	var packed: PhysicsMaterial = PhysicsMaterial.new()
+	packed.friction = 1.0
+	_floor.physics_material_override = packed
+	var holder: CollisionShape3D = CollisionShape3D.new()
+	_floor_shape = HeightMapShape3D.new()
+	var cells: int = ceili((world_size + floor_step * 2.0) / floor_cell)
+	_floor_shape.map_width = cells + 1
+	_floor_shape.map_depth = cells + 1
+	holder.shape = _floor_shape
+	# A heightmap's samples are a metre apart; the node's scale is what spaces them.
+	holder.scale = Vector3(floor_cell, 1.0, floor_cell)
+	_floor.add_child(holder)
+	add_child(_floor)
+	_follow_floor()
+
+
+## Moves the floor with the focus in [member floor_step] jumps, re-sampling the ground under it each
+## time, so it is rebuilt a few times a minute rather than every frame.
+func _follow_floor() -> void:
+	if _floor == null or not is_instance_valid(_floor):
+		return
+	var centre: Vector2 = Vector2.ZERO
+	if _focus != null and is_instance_valid(_focus):
+		centre = Vector2(_focus.global_position.x, _focus.global_position.z)
+	centre = Vector2(snappedf(centre.x, floor_step), snappedf(centre.y, floor_step))
+	if centre == _floor_centre:
+		return
+	_floor_centre = centre
+	var side: int = _floor_shape.map_width
+	var half: float = float(side - 1) * 0.5
+	var heights: PackedFloat32Array = PackedFloat32Array()
+	heights.resize(side * side)
+	for z: int in side:
+		for x: int in side:
+			var at: Vector2 = centre + Vector2(float(x) - half, float(z) - half) * floor_cell
+			heights[z * side + x] = get_floor_height(at)
+	_floor_shape.map_data = heights
+	_floor.global_position = Vector3(centre.x, 0.0, centre.y)
+
+
+## Height of the packed snow floor at [param xz]: the undisturbed surface less [member floor_sink].
+func get_floor_height(xz: Vector2) -> float:
+	return get_undeformed_surface_height(xz) - floor_sink
+
+
+## True for the floor collider, so a body can tell it is riding on the snow from what it touches.
+func is_floor(body: Object) -> bool:
+	return body != null and body == _floor
 
 #endregion
 

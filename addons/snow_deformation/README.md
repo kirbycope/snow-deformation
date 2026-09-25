@@ -118,6 +118,31 @@ The surface shader needs the same heights on the GPU. It takes an optional heigh
 (`use_heightmap`, `heightmap`, `heightmap_origin`, `heightmap_size`, `heightmap_scale`) and otherwise
 uses the constant `terrain_y`.
 
+## Snowballs
+
+`scenes/snowball.tscn` is a `Snowball`, a `RigidBody3D` that starts the size of a football (22 cm across)
+and grows as it rolls over the snow. It picks up a layer `pick_up_depth` thick along its width, so it
+grows quickly while small and more slowly as it gets big: ten metres of rolling takes a football to a
+ball a snowman can stand on. Its mass follows its volume at `density`, and the snow it picks up was
+standing still, so it slows as it grows. `rolling_resistance` stops one that is let go of within a
+couple of metres, and on packed snow it rolls without skidding.
+
+It rides on the snow instead of sinking through it, because it masks the manager's floor layer (next
+section). A snowball touching another one locks its rotation, so one set on top of another holds there
+on friction: a snowman is stacked with nothing more than a pickup that can carry a `RigidBody3D`, such
+as the player controller's own pickup and hold. `max_radius` caps the growth.
+
+Only the body's multiplayer authority grows it. `radius` is the one property a synchronizer has to
+carry for the other peers to match.
+
+## The packed snow floor
+
+The snow has no collision of its own: feet, hooves and a beach ball sink through it to the ground
+underneath and press it on the way. Something that should ride on the snow (a snowball, a sled) masks
+`floor_layer`, layer 13 by default, and the manager lays a heightmap collider for it at the snow's
+surface less `floor_sink`, with friction 1. It covers the whole window and moves with the focus in
+`floor_step` jumps. Set `floor_layer` to 0 for no floor.
+
 ## How it works
 
 ```
@@ -183,7 +208,7 @@ snow simply stays flat.
 
 `scenes/demo/demo.tscn` ships with the addon and is this repository's main scene: an arctic tundra in
 a blizzard, 35 cm of snow over flat ground, the player controller's Player, and three
-balls to shove. It needs `addons/3d_player_controller`, `addons/controls` and `addons/weather_fx`,
+balls to shove, and three snowballs to roll and stack. It needs `addons/3d_player_controller`, `addons/controls` and `addons/weather_fx`,
 which `python tools/pull_addons.py` fetches here.
 
 Walk and the feet cut prints with steep walls and raised rims; run and they merge into a ploughed
@@ -198,7 +223,7 @@ Footsteps and the crush of shoved snow use the addon's own `snow_footsteps.tres`
 ## Tests
 
 `tests/` holds the unit tests: stamp packing against the shader's struct, the window's snapping and
-scrolling, the height providers, the FootStamper's decisions, the drag on bodies ploughing through, a sword blade pressed along its length and swept between frames, that the demo loads and reaches only the addons it depends on, and that every shader compiles and every
+scrolling, the height providers, the FootStamper's decisions, the drag on bodies ploughing through, a sword blade pressed along its length and swept between frames, the snowball's growth, weight, rolling and stacking, the packed snow floor, that the demo loads and reaches only the addons it depends on, and that every shader compiles and every
 global it reads is declared. They run headless, where the compute half is off by design.
 
 ## Licence
