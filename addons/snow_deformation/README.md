@@ -1,7 +1,7 @@
 # Snow Deformation
 
 Real-time deformable snow for Godot 4.8+ on the Forward+ renderer. Deep footprints with steep walls
-and a crumbly raised rim, continuous gouges from a blade moving metres between frames, and snow that
+and a crumbly raised rim, troughs ploughed by anything rolling through it, and snow that
 is visibly a different material inside a track than it is outside one.
 
 ## Installing
@@ -49,11 +49,6 @@ The snow surface mesh carries no collider, so that is what happens by default.
 A four-legged character is the same node with four bones, for example
 `["Hand_L", "Hand_R", "Toe_L", "Toe_R"]` on a horse.
 
-**BladeStamper** goes on a weapon, with a marker at the base of the cutting edge and one at the tip. A
-swing covers metres in a couple of frames, so it walks the sweep in substeps fine enough that
-consecutive capsules overlap, and clips each one to the part of the blade that is actually under the
-snow.
-
 Anything else can call the manager directly:
 
 ```gdscript
@@ -76,10 +71,16 @@ Only things that move count, the same list the grass uses: `CharacterBody3D`, `R
 `AnimatableBody3D` and `PhysicalBone3D`. The ground, walls and rocks cleared their own snow when the
 level was built and do not also push it about.
 
-A body carrying its own `FootStamper` or `BladeStamper` is skipped. Feet and a blade edge describe far
+A body carrying its own `FootStamper` is skipped. Feet describe far
 more than a sphere around the body's origin would, and pressing both would bury the prints under a
 circle. `press_bodies` turns the whole thing off, `max_pressed_bodies` caps how many are pressed in one
 frame, and when more are in the snow than that the widest and nearest win, again as in the grass.
+
+The snow also holds a `RigidBody3D` back while it ploughs. `press_drag` is a drag in newtons per metre
+per second for each square metre of the body pushed through the snow, so it does not scale with mass:
+the default 1.5 stops a beach ball kicked at 6 m/s through 35 cm of snow after about 1.8 m, while a
+boulder ploughs on. Every rigid body in the snow is held
+back, including ones past the `max_pressed_bodies` stamp budget. Set it to 0 for no drag.
 
 ## Sound
 
@@ -176,13 +177,12 @@ snow simply stays flat.
 ## The demo
 
 `scenes/demo/demo.tscn` ships with the addon and is this repository's main scene: an arctic tundra in
-a blizzard, 35 cm of snow over flat ground, the player controller's Player with a sword, and three
+a blizzard, 35 cm of snow over flat ground, the player controller's Player, and three
 balls to shove. It needs `addons/3d_player_controller`, `addons/controls` and `addons/weather_fx`,
 which `python tools/pull_addons.py` fetches here.
 
 Walk and the feet cut prints with steep walls and raised rims; run and they merge into a ploughed
-trench. Left click swings the sword through the snow and leaves one continuous gouge. Shove a ball and
-it ploughs a trough with berms down both sides.
+trench. Shove a ball and it ploughs a trough with berms down both sides.
 
 - **F1** shows the deformation texture: red is the depression, green the berm, blue the disturbed mask.
 - **F2** wipes every track.
@@ -193,7 +193,7 @@ Footsteps and the crush of shoved snow use the addon's own `snow_footsteps.tres`
 ## Tests
 
 `tests/` holds the unit tests: stamp packing against the shader's struct, the window's snapping and
-scrolling, the height providers, both stampers' decisions, that the demo loads and reaches only the addons it depends on, and that every shader compiles and every
+scrolling, the height providers, the FootStamper's decisions, the drag on bodies ploughing through, that the demo loads and reaches only the addons it depends on, and that every shader compiles and every
 global it reads is declared. They run headless, where the compute half is off by design.
 
 ## Licence

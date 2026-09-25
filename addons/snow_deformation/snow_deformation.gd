@@ -6,8 +6,8 @@ extends Node3D
 ## Real-time deformable snow: one node to drop into a level.
 ##
 ## Keeps an [code]RGBA16F[/code] texture of the snow around a focus node (the player by default) and
-## exposes it to every material through global shader parameters. Stampers ([FootStamper],
-## [BladeStamper]) hand it world-space shapes; two compute passes scroll the window as the focus moves
+## exposes it to every material through global shader parameters. [FootStamper] and pressed bodies
+## hand it world-space shapes; two compute passes scroll the window as the focus moves
 ## and carve this frame's shapes into it. The node also owns the snow surface mesh, so nothing outside
 ## has to be wired up.
 ##
@@ -88,7 +88,7 @@ const _OVERLAY_SIZE: Vector2 = Vector2(256.0, 256.0)
 
 @export_group("Bodies")
 ## Let physics bodies moving through the snow press it, the same way a [GrassField] is pressed: a
-## barrel, a ball, a ragdoll, a boulder. A body that carries its own [FootStamper] or [BladeStamper]
+## barrel, a ball, a ragdoll, a boulder. A body that carries its own [FootStamper]
 ## is left alone, because that component already describes its shape far better than a sphere does.
 @export var press_bodies: bool = true:
 	set(value):
@@ -97,6 +97,12 @@ const _OVERLAY_SIZE: Vector2 = Vector2(256.0, 256.0)
 			_press_area.monitoring = value
 			if not value:
 				_pressers.clear()
+## How hard the snow holds back a rigid body ploughing through it: newtons for each metre per second
+## of speed, per square metre of the body pushed through the snow. It does not scale with mass, so a
+## beach ball kicked at 6 m/s through 35 cm of snow stops after about 1.8 m, while a boulder
+## ploughs on. 0 lets bodies roll as though the
+## snow were not there.
+@export_range(0.0, 50.0, 0.1, "suffix:N s/m3") var press_drag: float = 1.5
 ## Radius used for a body whose shapes have none of their own, such as a box or a mesh collider.
 @export_range(0.05, 5.0, 0.05, "suffix:m") var press_radius_fallback: float = 0.4
 ## Bodies pressed in one frame. The widest and nearest win the slots, as they do in the grass.
@@ -320,11 +326,11 @@ func _on_press_body_exited(body: Node3D) -> void:
 	_press_last_heard.erase(body)
 
 
-## A body that already stamps for itself is skipped: the Player's feet and a blade's edge describe far
+## A body that already stamps for itself is skipped: the Player's feet describe far
 ## more than a sphere around the body's origin would, and pressing both would bury the prints.
 static func _has_own_stamper(body: Node) -> bool:
 	for child: Node in body.get_children():
-		if child is FootStamper or child is BladeStamper:
+		if child is FootStamper:
 			return true
 		if _has_own_stamper(child):
 			return true
@@ -376,7 +382,7 @@ static func _shape_extent(shape: Shape3D) -> Vector2:
 
 ## Presses every tracked body that is actually in the snow. On the physics clock, because that is when
 ## a body has finished moving for the frame.
-func _physics_process(_delta: float) -> void:
+func _physics_process(delta: float) -> void:
 	if Engine.is_editor_hint() or not press_bodies or _pressers.is_empty():
 		return
 	_pressers = _pressers.filter(is_instance_valid)
@@ -384,17 +390,36 @@ func _physics_process(_delta: float) -> void:
 		_pressers.sort_custom(_presses_more)
 	var pressed: int = 0
 	for body: Node3D in _pressers:
-		if pressed >= max_pressed_bodies:
-			break
 		var measured: Vector2 = _press_shape.get(body, Vector2(press_radius_fallback, press_radius_fallback))
 		var at: Vector3 = body.global_position
 		var bottom: float = at.y - measured.y
 		var top: float = get_undeformed_surface_height(Vector2(at.x, at.z))
 		if bottom >= top:
 			continue # Resting on the snow rather than in it.
-		add_sphere(Vector3(at.x, bottom, at.z), measured.x, clampf(top - bottom, 0.0, snow_depth))
+		var sunk: float = clampf(top - bottom, 0.0, snow_depth)
+		# Every body in the snow is held back, not only those with a stamp slot this frame.
+		if body is RigidBody3D:
+			hold_back(body as RigidBody3D, measured.x, sunk, delta)
+		if pressed >= max_pressed_bodies:
+			continue
+		add_sphere(Vector3(at.x, bottom, at.z), measured.x, sunk)
 		_crush_heard(body, at)
 		pressed += 1
+
+
+## Slows [param body]'s horizontal motion for the snow it is ploughing: [param radius] wide, [param sunk]
+## metres deep, for [param delta] seconds. Applied as the exact exponential decay of a linear drag
+## rather than as a force, so a very light body is stopped rather than flung back the other way.
+func hold_back(body: RigidBody3D, radius: float, sunk: float, delta: float) -> void:
+	if press_drag <= 0.0 or sunk <= 0.0 or body.freeze or body.mass <= 0.0:
+		return
+	var along: Vector3 = Vector3(body.linear_velocity.x, 0.0, body.linear_velocity.z)
+	if along.is_zero_approx():
+		return
+	var area: float = 2.0 * radius * sunk # The face it pushes through the snow.
+	var kept: float = exp(-press_drag * area * delta / body.mass)
+	body.linear_velocity -= along * (1.0 - kept)
+	body.angular_velocity *= kept
 
 
 ## The sound of snow being shoved aside, once a body has ploughed [member press_sound_interval] further
@@ -458,7 +483,7 @@ func add_footprint(pos: Vector3, yaw: float, half_width: float, half_length: flo
 	_push(_pack(SHAPE_ELLIPSE, pos, pos, half_width, half_length, yaw, rim_factor, depth, depth * 0.7, wall_softness, rim_width))
 
 
-## Queue a capsule from [param a] to [param b]: a blade gouge, a drag mark, or any body wading through.
+## Queue a capsule from [param a] to [param b]: a drag mark, or any body wading through.
 func add_capsule(a: Vector3, b: Vector3, radius: float, depth_a: float, depth_b: float, rim_factor: float = 0.35, wall_softness: float = 0.25, rim_width: float = 0.4) -> void:
 	_push(_pack(SHAPE_CAPSULE, a, b, radius, radius, 0.0, rim_factor, depth_a, depth_b, wall_softness, rim_width))
 

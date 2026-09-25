@@ -1,7 +1,7 @@
 # Snow Deformation for Godot 4.8+
 
-Real-time deformable snow: footprints with berms, continuous blade gouges, ploughed troughs behind
-physics bodies, and compressed-snow shading inside every track.
+Real-time deformable snow: footprints with berms, ploughed troughs behind physics
+bodies that drag them to a stop, and compressed-snow shading inside every track.
 
 **[Read the full documentation](addons/snow_deformation/README.md)**, which ships with the addon so it
 is there however you installed it.

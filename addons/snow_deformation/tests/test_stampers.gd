@@ -1,5 +1,5 @@
 extends GutTest
-## What the two stampers decide to cut, and how deep.
+## What the FootStamper decides to cut, and how deep.
 ##
 ## The manager below is a recording subclass rather than the real thing, because the real one drops
 ## every stamp headless (there is no RenderingDevice) and these tests are about the numbers handed to
@@ -7,7 +7,6 @@ extends GutTest
 
 const MANAGER: GDScript = preload("res://addons/snow_deformation/snow_deformation.gd")
 const FOOT_STAMPER: GDScript = preload("res://addons/snow_deformation/foot_stamper.gd")
-const BLADE_STAMPER: GDScript = preload("res://addons/snow_deformation/blade_stamper.gd")
 
 
 ## Writes down what it was asked to stamp instead of packing it for a GPU.
@@ -31,24 +30,6 @@ func before_each() -> void:
 	_snow.snow_depth = 0.4
 	_snow.create_surface = false
 	add_child_autofree(_snow)
-
-
-## A blade stamper wired to two markers a metre apart, both children of the node under test's parent.
-func _make_blade() -> Node:
-	var holder: Node3D = Node3D.new()
-	add_child_autofree(holder)
-	var base: Marker3D = Marker3D.new()
-	base.name = "Base"
-	holder.add_child(base)
-	var tip: Marker3D = Marker3D.new()
-	tip.name = "Tip"
-	holder.add_child(tip)
-	var stamper: Node = BLADE_STAMPER.new()
-	stamper.base_marker = NodePath("../Base")
-	stamper.tip_marker = NodePath("../Tip")
-	stamper.blade_radius = 0.03
-	holder.add_child(stamper)
-	return stamper
 
 
 #region Feet
@@ -159,91 +140,5 @@ func test_a_stamper_with_no_sound_assigned_stays_silent_and_does_not_break() -> 
 	stamper.call("_stamp", Vector3(0.0, 0.1, 0.0), Vector3(0.0, 0.0, 1.0), 0)
 	assert_eq(_snow.footprints.size(), 1, "and it still cuts prints with nothing to play")
 	assert_eq((stamper.get("_voices") as Array).size(), 0, "without building a voice it will never use")
-
-#endregion
-
-
-#region Blade
-
-func test_a_blade_held_clear_of_the_snow_cuts_nothing() -> void:
-	var stamper: Node = _make_blade()
-	stamper.call("_stamp_blade", Vector3(0.0, 1.5, 0.0), Vector3(1.0, 1.2, 0.0))
-	assert_eq(_snow.capsules.size(), 0, "Both ends are above the surface, so there is nothing to cut")
-
-
-func test_a_buried_blade_cuts_its_whole_length() -> void:
-	var stamper: Node = _make_blade()
-	stamper.call("_stamp_blade", Vector3(0.0, 0.1, 0.0), Vector3(1.0, 0.2, 0.0))
-	assert_eq(_snow.capsules.size(), 1, "One capsule for the whole blade")
-	assert_almost_eq(_snow.capsules[0]["depth_a"] as float, 0.3, 0.0001, "as deep as each end is under the surface")
-	assert_almost_eq(_snow.capsules[0]["depth_b"] as float, 0.2, 0.0001, "which differs along the blade")
-
-
-func test_a_half_buried_blade_is_clipped_to_the_snow_line() -> void:
-	var stamper: Node = _make_blade()
-	# Base 0.4 m above the surface, tip 0.4 m below it: the crossing is exactly halfway.
-	stamper.call("_stamp_blade", Vector3(0.0, 0.8, 0.0), Vector3(2.0, 0.0, 0.0))
-	assert_eq(_snow.capsules.size(), 1, "It still cuts")
-	var a: Vector3 = _snow.capsules[0]["a"]
-	assert_almost_eq(a.x, 1.0, 0.001, "but the gouge starts where the blade crosses the surface, not at the hilt")
-	assert_almost_eq(a.y, 0.4, 0.001, "which is at the height of the undisturbed snow")
-	assert_almost_eq(_snow.capsules[0]["depth_a"] as float, 0.0, 0.001, "so that end has no depth")
-	assert_almost_eq(_snow.capsules[0]["depth_b"] as float, 0.4, 0.001, "and the buried end has all of it")
-
-
-func test_the_first_frame_after_enabling_sweeps_nothing() -> void:
-	var stamper: Node = _make_blade()
-	stamper._physics_process(0.016)
-	assert_eq(_snow.capsules.size(), 0, "There is no previous position yet, so there is no sweep from the origin to here")
-	assert_true(stamper.get("_has_previous"), "but there is one from now on")
-
-
-func test_a_fast_sweep_is_broken_into_overlapping_steps() -> void:
-	var stamper: Node = _make_blade()
-	var holder: Node3D = stamper.get_parent() as Node3D
-	var tip: Node3D = holder.get_node("Tip")
-	var base: Node3D = holder.get_node("Base")
-	base.position = Vector3(0.0, 0.1, 0.0)
-	tip.position = Vector3(0.0, 0.1, -1.0)
-	stamper._physics_process(0.016)
-	_snow.capsules.clear()
-
-	# 20 cm in a frame: about what the tip of a real swing covers, and far more than the blade is
-	# thick, so stamping it once would leave a dotted line rather than a gouge.
-	var travel: float = 0.2
-	base.position = Vector3(travel, 0.1, 0.0)
-	tip.position = Vector3(travel, 0.1, -1.0)
-	stamper._physics_process(0.016)
-
-	assert_gt(_snow.capsules.size(), 1, "The sweep is substepped rather than stamped once")
-	assert_lte(_snow.capsules.size(), stamper.max_substeps, "and never past the cap")
-	var spacing: float = travel / float(_snow.capsules.size())
-	assert_lt(spacing, stamper.blade_radius * 2.0, "with the steps closer together than the gouge is wide, so they overlap")
-
-
-func test_the_substep_count_is_capped_however_fast_the_blade_moves() -> void:
-	var stamper: Node = _make_blade()
-	var holder: Node3D = stamper.get_parent() as Node3D
-	var tip: Node3D = holder.get_node("Tip")
-	var base: Node3D = holder.get_node("Base")
-	base.position = Vector3(0.0, 0.1, 0.0)
-	tip.position = Vector3(0.0, 0.1, -1.0)
-	stamper._physics_process(0.016)
-	_snow.capsules.clear()
-
-	# A teleport rather than a swing. The cap is what stops one absurd frame filling the whole
-	# per-frame stamp budget; the gouge it leaves may have gaps, and that is the intended trade.
-	base.position = Vector3(500.0, 0.1, 0.0)
-	tip.position = Vector3(500.0, 0.1, -1.0)
-	stamper._physics_process(0.016)
-	assert_eq(_snow.capsules.size(), stamper.max_substeps, "However far it moved, it costs at most max_substeps capsules")
-
-
-func test_turning_a_stamper_off_and_on_does_not_drag_a_line_across_the_level() -> void:
-	var stamper: Node = _make_blade()
-	stamper._physics_process(0.016)
-	assert_true(stamper.get("_has_previous"), "It has a previous position while running")
-	stamper.active = false
-	assert_false(stamper.get("_has_previous"), "and forgets it the moment it is switched off, so re-enabling it elsewhere sweeps nothing")
 
 #endregion

@@ -5,11 +5,10 @@ extends GutTest
 ## disables its compute passes. That is deliberate: it is the same path a project on the Compatibility
 ## renderer takes, and it has to stay working. Everything tested below is the CPU half, which runs
 ## either way: stamp packing, the window's snapping and scrolling arithmetic, the height providers, and
-## the two stampers' decisions about when and how deep to cut.
+## the FootStamper's decisions about when and how deep to cut.
 
 const MANAGER: GDScript = preload("res://addons/snow_deformation/snow_deformation.gd")
 const FOOT_STAMPER: GDScript = preload("res://addons/snow_deformation/foot_stamper.gd")
-const BLADE_STAMPER: GDScript = preload("res://addons/snow_deformation/blade_stamper.gd")
 
 ## Tolerance for reading a value back out of a PackedFloat32Array, which stores float32.
 const F32: float = 1e-6
@@ -210,6 +209,48 @@ func test_a_body_with_no_measurable_shape_falls_back() -> void:
 	var body: RigidBody3D = RigidBody3D.new()
 	add_child_autofree(body)
 	assert_almost_eq(SnowDeformation._measure(body, 0.4).x, 0.4, 0.001, "A body with nothing to measure uses the fallback rather than nothing")
+
+
+func _rolling(mass: float) -> RigidBody3D:
+	var body: RigidBody3D = RigidBody3D.new()
+	body.mass = mass
+	body.gravity_scale = 0.0
+	add_child_autofree(body)
+	body.linear_velocity = Vector3(4.0, -1.0, 3.0)
+	body.angular_velocity = Vector3(0.0, 0.0, -8.0)
+	return body
+
+
+func test_the_snow_holds_back_a_body_ploughing_through_it() -> void:
+	var body: RigidBody3D = _rolling(1.0)
+	_snow.hold_back(body, 0.5, 0.3, 1.0 / 60.0)
+	assert_lt(Vector2(body.linear_velocity.x, body.linear_velocity.z).length(), 5.0, "It is slowed along the ground")
+	assert_almost_eq(body.linear_velocity.y, -1.0, 0.0001, "but not stopped from falling")
+	assert_lt(absf(body.angular_velocity.z), 8.0, "and its roll slows with it")
+	assert_almost_eq(body.linear_velocity.x / body.linear_velocity.z, 4.0 / 3.0, 0.0001, "without being turned aside")
+
+
+func test_a_light_body_is_stopped_sooner_than_a_heavy_one() -> void:
+	var ball: RigidBody3D = _rolling(0.2)
+	var boulder: RigidBody3D = _rolling(200.0)
+	for i: int in 60:
+		_snow.hold_back(ball, 0.5, 0.3, 1.0 / 60.0)
+		_snow.hold_back(boulder, 0.5, 0.3, 1.0 / 60.0)
+	assert_lt(ball.linear_velocity.x, 0.5, "A second in deep snow all but stops a beach ball")
+	assert_gt(boulder.linear_velocity.x, 3.9, "while a boulder ploughs on")
+
+
+func test_the_drag_never_pushes_a_body_backwards() -> void:
+	var feather: RigidBody3D = _rolling(0.001)
+	_snow.hold_back(feather, 0.5, 0.4, 1.0 / 60.0)
+	assert_gte(feather.linear_velocity.x, 0.0, "However light, the snow only ever stops it")
+
+
+func test_no_drag_leaves_a_body_alone() -> void:
+	_snow.press_drag = 0.0
+	var body: RigidBody3D = _rolling(1.0)
+	_snow.hold_back(body, 0.5, 0.3, 1.0 / 60.0)
+	assert_almost_eq(body.linear_velocity.x, 4.0, 0.0001, "press_drag 0 rolls as though there were no snow")
 
 #endregion
 

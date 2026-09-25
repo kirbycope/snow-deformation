@@ -100,7 +100,7 @@ void main() {
 			float along = clamp(local.y / half_axes.y * 0.5 + 0.5, 0.0, 1.0);
 			depth = mix(s.params1.x, s.params1.y, along);
 		} else {
-			// Capsule: a blade gouge, a drag mark or a body. Depth runs along the segment.
+			// Capsule: a drag mark or a body. Depth runs along the segment.
 			vec2 hit = segment_distance(world, s.a.xz, s.b.xz);
 			float radius = max(s.params0.x, 1e-4);
 			d = hit.x / radius;

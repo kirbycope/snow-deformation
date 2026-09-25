@@ -31,12 +31,9 @@ func test_the_demo_is_wired() -> void:
 	var demo: Node3D = packed.instantiate() as Node3D
 	add_child_autofree(demo)
 	assert_not_null(demo.get("snow"), "snow is assigned")
-	assert_not_null(demo.get("player"), "player is assigned")
-	assert_not_null(demo.get("sword"), "sword is assigned")
 	assert_not_null(demo.get("readout"), "readout is assigned")
 	assert_not_null(demo.get("weather"), "weather is assigned")
 	assert_not_null(demo.get_node_or_null("Player/FootStamper"), "the Player leaves footprints")
-	assert_not_null(demo.get_node_or_null("Player/Sword/BladeStamper"), "the sword gouges")
 	assert_eq(demo.get_node("PhysicsProps").get_child_count(), 3, "three balls to shove")
 	assert_not_null(demo.get_node("Player/FootStamper").get("footstep_sound"), "footsteps are heard")
 	assert_not_null(demo.get_node("SnowDeformation").get("press_sound"), "ploughed snow is heard")

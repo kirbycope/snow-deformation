@@ -4,7 +4,7 @@ class_name SnowTerrainHeight
 extends Resource
 ## Where the ground under the snow is, on the CPU.
 ##
-## [SnowDeformation] needs this to work out how far a foot or a blade has sunk, because reading the
+## [SnowDeformation] needs this to work out how far a foot or a body has sunk, because reading the
 ## deformation texture back from the GPU every frame is exactly what the design forbids. Subclass it
 ## for a real terrain; [SnowTerrainHeightFlat] and [SnowTerrainHeightRaycast] cover the usual cases.
 

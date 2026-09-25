@@ -21,15 +21,8 @@ func _enter_tree() -> void:
 		preload("foot_stamper.gd"),
 		preload("assets/icons/foot_stamper_icon.svg")
 	)
-	add_custom_type(
-		"BladeStamper",
-		"Node",
-		preload("blade_stamper.gd"),
-		preload("assets/icons/blade_stamper_icon.svg")
-	)
 
 
 func _exit_tree() -> void:
 	remove_custom_type("SnowDeformation")
 	remove_custom_type("FootStamper")
-	remove_custom_type("BladeStamper")
