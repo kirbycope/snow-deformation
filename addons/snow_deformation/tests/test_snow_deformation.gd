@@ -211,6 +211,62 @@ func test_a_body_with_no_measurable_shape_falls_back() -> void:
 	assert_almost_eq(SnowDeformation._measure(body, 0.4).x, 0.4, 0.001, "A body with nothing to measure uses the fallback rather than nothing")
 
 
+## A sword as the player controller builds one: an AnimatableBody3D whose blade is a long thin box,
+## 90 cm along its Z, starting 20 cm past the body's origin at the hilt.
+func _sword(at: Transform3D) -> AnimatableBody3D:
+	var body: AnimatableBody3D = AnimatableBody3D.new()
+	body.sync_to_physics = false # As the player controller's WeaponBody has it, so it moves when told to.
+	var collider: CollisionShape3D = CollisionShape3D.new()
+	var blade: BoxShape3D = BoxShape3D.new()
+	blade.size = Vector3(0.04, 0.147, 0.9)
+	collider.shape = blade
+	collider.position = Vector3(0.0, 0.0, 0.65)
+	body.add_child(collider)
+	add_child_autofree(body)
+	body.global_transform = at
+	return body
+
+
+func test_a_blade_is_pressed_along_its_length_not_as_a_ball_round_the_hilt() -> void:
+	var body: AnimatableBody3D = _sword(Transform3D.IDENTITY)
+	var segments: Array[Dictionary] = SnowDeformation._segments(body, 0.4)
+	assert_eq(segments.size(), 1, "One shape, one segment")
+	var a: Vector3 = segments[0]["a"]
+	var b: Vector3 = segments[0]["b"]
+	assert_almost_eq(absf(b.z - a.z), 0.9 - 0.147, 0.001, "It runs the length of the blade, less the rounded ends")
+	assert_almost_eq((a.z + b.z) * 0.5, 0.65, 0.001, "centred on the blade rather than the hilt")
+	assert_almost_eq(segments[0]["radius"] as float, 0.147 * 0.5, 0.001, "as thick as the blade is wide")
+
+
+func test_a_swing_dipping_the_tip_into_the_snow_cuts() -> void:
+	# The case that used to cut nothing: the hilt stays 1 m up, well clear of snow whose top is 0.4 m,
+	# while the blade points down and the tip goes below the surface.
+	var before: int = _snow.stamps_total
+	var hilt_up_tip_down: Transform3D = Transform3D(Basis(Vector3.RIGHT, deg_to_rad(65.0)), Vector3(0.0, 1.0, 0.0))
+	var body: AnimatableBody3D = _sword(hilt_up_tip_down)
+	assert_true(_snow.call("_press_body", body), "The tip is in the snow, so the swing cuts")
+	assert_gt(_snow.stamps_total, before, "and hands the manager something to carve")
+
+
+func test_a_blade_held_clear_of_the_snow_cuts_nothing() -> void:
+	var body: AnimatableBody3D = _sword(Transform3D(Basis.IDENTITY, Vector3(0.0, 1.5, 0.0)))
+	var before: int = _snow.stamps_total
+	assert_false(_snow.call("_press_body", body), "Held level at 1.5 m, nothing is in the snow")
+	assert_eq(_snow.stamps_total, before, "and nothing is carved")
+
+
+func test_a_fast_slash_is_swept_between_frames() -> void:
+	var down: Basis = Basis(Vector3.RIGHT, deg_to_rad(90.0)) # Blade pointing straight down.
+	var body: AnimatableBody3D = _sword(Transform3D(down, Vector3(0.0, 0.9, 0.0)))
+	_snow.call("_press_body", body)
+	var before: int = _snow.stamps_total
+	body.global_position = Vector3(0.6, 0.9, 0.0) # 60 cm in one physics frame.
+	_snow.call("_press_body", body)
+	var steps: int = _snow.stamps_total - before
+	assert_gt(steps, 1, "A slash that far in one frame is stamped in steps, not once")
+	assert_lte(steps, SnowDeformation.MAX_SWEEP_STEPS, "and never past the cap")
+
+
 func _rolling(mass: float) -> RigidBody3D:
 	var body: RigidBody3D = RigidBody3D.new()
 	body.mass = mass

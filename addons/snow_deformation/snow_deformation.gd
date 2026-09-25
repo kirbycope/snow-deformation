@@ -26,6 +26,9 @@ const STAMP_FLOATS: int = 16
 ## Shape tags, in a stamp's first vec4 w component.
 const SHAPE_ELLIPSE: float = 0.0
 const SHAPE_CAPSULE: float = 1.0
+## Most steps a single shape is swept in per physics frame, however fast it moved. Enough for a sword
+## tip crossing a metre in one frame to leave overlapping capsules.
+const MAX_SWEEP_STEPS: int = 16
 
 const _SCROLL_SHADER: String = "res://addons/snow_deformation/shaders/snow_scroll.glsl"
 const _UPDATE_SHADER: String = "res://addons/snow_deformation/shaders/snow_update.glsl"
@@ -153,6 +156,8 @@ var _press_area: Area3D = null
 ## Bodies currently inside the press area, and the radius and underside each one was measured at.
 var _pressers: Array[Node3D] = []
 var _press_shape: Dictionary[Node3D, Vector2] = {}
+## Each body's shapes as world-space segments on the last physics frame, so a fast one is swept.
+var _press_previous: Dictionary[Node3D, Array] = {}
 ## Where each body last made a crush, so the next one waits until it has ploughed a bit further.
 var _press_last_heard: Dictionary[Node3D, Vector3] = {}
 var _press_voices: Array[AudioStreamPlayer3D] = []
@@ -323,6 +328,7 @@ func _on_press_body_entered(body: Node3D) -> void:
 func _on_press_body_exited(body: Node3D) -> void:
 	_pressers.erase(body)
 	_press_shape.erase(body)
+	_press_previous.erase(body)
 	_press_last_heard.erase(body)
 
 
@@ -394,17 +400,99 @@ func _physics_process(delta: float) -> void:
 		var at: Vector3 = body.global_position
 		var bottom: float = at.y - measured.y
 		var top: float = get_undeformed_surface_height(Vector2(at.x, at.z))
-		if bottom >= top:
-			continue # Resting on the snow rather than in it.
-		var sunk: float = clampf(top - bottom, 0.0, snow_depth)
-		# Every body in the snow is held back, not only those with a stamp slot this frame.
-		if body is RigidBody3D:
-			hold_back(body as RigidBody3D, measured.x, sunk, delta)
+		# Every rigid body in the snow is held back, not only those with a stamp slot this frame.
+		if body is RigidBody3D and bottom < top:
+			hold_back(body as RigidBody3D, measured.x, clampf(top - bottom, 0.0, snow_depth), delta)
 		if pressed >= max_pressed_bodies:
 			continue
-		add_sphere(Vector3(at.x, bottom, at.z), measured.x, sunk)
-		_crush_heard(body, at)
-		pressed += 1
+		if _press_body(body):
+			_crush_heard(body, at)
+			pressed += 1
+
+
+## Presses [param body]'s own collision shapes into the snow, each swept from where it was on the last
+## physics frame so a sword slash, which covers metres in a couple of frames, cuts one continuous
+## gouge rather than a dotted line. True when any part of it was below the surface.
+func _press_body(body: Node3D) -> bool:
+	var now: Array[Dictionary] = _segments(body as CollisionObject3D, press_radius_fallback)
+	var before: Array = _press_previous.get(body, [])
+	_press_previous[body] = now
+	var cut: bool = false
+	for k: int in now.size():
+		var seg: Dictionary = now[k]
+		var was: Dictionary = before[k] if k < before.size() else seg
+		var radius: float = seg["radius"]
+		var travel: float = maxf((seg["a"] as Vector3).distance_to(was["a"]), (seg["b"] as Vector3).distance_to(was["b"]))
+		var count: int = clampi(ceili(travel / maxf(radius * 0.5, 0.005)), 1, MAX_SWEEP_STEPS)
+		for i: int in range(1, count + 1):
+			var t: float = float(i) / float(count)
+			if _press_segment((was["a"] as Vector3).lerp(seg["a"], t), (was["b"] as Vector3).lerp(seg["b"], t), radius):
+				cut = true
+	return cut
+
+
+## Presses the part of a segment [param radius] thick, from [param a] to [param b], that is under the
+## snow. One end above the surface is moved to where the segment crosses it, so a blade dipped into the
+## snow cuts only as far as it went in rather than a trench stretched up to the hilt.
+func _press_segment(a: Vector3, b: Vector3, radius: float) -> bool:
+	var low_a: Vector3 = a - Vector3(0.0, radius, 0.0)
+	var low_b: Vector3 = b - Vector3(0.0, radius, 0.0)
+	var depth_a: float = get_undeformed_surface_height(Vector2(low_a.x, low_a.z)) - low_a.y
+	var depth_b: float = get_undeformed_surface_height(Vector2(low_b.x, low_b.z)) - low_b.y
+	if depth_a <= 0.0 and depth_b <= 0.0:
+		return false # Entirely above the snow.
+	if depth_a <= 0.0 or depth_b <= 0.0:
+		var at: Vector3 = low_a.lerp(low_b, clampf(depth_a / (depth_a - depth_b), 0.0, 1.0))
+		if depth_a > 0.0:
+			low_b = at
+			depth_b = 0.0
+		else:
+			low_a = at
+			depth_a = 0.0
+	add_capsule(low_a, low_b, radius, clampf(depth_a, 0.0, snow_depth), clampf(depth_b, 0.0, snow_depth))
+	return true
+
+
+## A body's collision shapes as world-space segments with a radius. A sphere is a segment of no
+## length, a capsule or a cylinder runs along its own Y, and a box along its longest side, as thick as
+## its middle one: a box the shape of a sword blade presses as the blade, not as a ball round the hilt.
+## A shape with nothing to measure presses as a sphere of [param fallback] at its own position.
+static func _segments(body: CollisionObject3D, fallback: float) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	if body == null:
+		return out
+	for owner_id: int in body.get_shape_owners():
+		if body.is_shape_owner_disabled(owner_id):
+			continue
+		var xf: Transform3D = body.global_transform * body.shape_owner_get_transform(owner_id)
+		var grow: float = maxf(maxf(xf.basis.get_scale().x, xf.basis.get_scale().y), xf.basis.get_scale().z)
+		for i: int in body.shape_owner_get_shape_count(owner_id):
+			var shape: Shape3D = body.shape_owner_get_shape(owner_id, i)
+			var half: Vector3 = Vector3.ZERO
+			var radius: float = fallback
+			if shape is SphereShape3D:
+				radius = (shape as SphereShape3D).radius
+			elif shape is CapsuleShape3D:
+				var capsule: CapsuleShape3D = shape as CapsuleShape3D
+				radius = capsule.radius
+				half.y = maxf(capsule.height * 0.5 - capsule.radius, 0.0)
+			elif shape is CylinderShape3D:
+				var cylinder: CylinderShape3D = shape as CylinderShape3D
+				radius = cylinder.radius
+				half.y = cylinder.height * 0.5
+			elif shape is BoxShape3D:
+				var extent: Vector3 = (shape as BoxShape3D).size * 0.5
+				var longest: int = extent.max_axis_index()
+				var shortest: int = extent.min_axis_index()
+				if longest == shortest:
+					radius = extent.x # A cube: every side is the same.
+				else:
+					radius = extent[3 - longest - shortest]
+					half[longest] = maxf(extent[longest] - radius, 0.0)
+			out.append({"a": xf * -half, "b": xf * half, "radius": radius * grow})
+	if out.is_empty():
+		out.append({"a": body.global_position, "b": body.global_position, "radius": fallback})
+	return out
 
 
 ## Slows [param body]'s horizontal motion for the snow it is ploughing: [param radius] wide, [param sunk]

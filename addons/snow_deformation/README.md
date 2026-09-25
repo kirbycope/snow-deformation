@@ -62,10 +62,15 @@ snow.clear()
 ## Physics objects
 
 Anything that moves and has a collider presses the snow, the same way a `GrassField` is pressed: the
-manager keeps an `Area3D` over its window, notices bodies entering and leaving, and measures each
-one's radius and underside from its own collision shapes once on the way in. A ball rolling through
-deep snow ploughs a rounded trough with berms down both sides; a body sitting still holds its dent and
-nothing more.
+manager keeps an `Area3D` over its window, notices bodies entering and leaving, and presses each
+one's own collision shapes into the snow every physics frame. A sphere presses as a ball; a capsule or
+cylinder along its length; a box along its longest side, as thick as its middle one. So a ball rolling
+through deep snow ploughs a rounded trough with berms down both sides, and a sword swing cuts a gouge
+wherever the blade goes under the surface, with nothing added to the weapon: the player controller's
+`WeaponBody` is an `AnimatableBody3D` with a blade-shaped box, and that is what gets pressed. Each
+shape is swept from where it was on the last physics frame, up to 16 steps, so a slash covering most of
+a metre in one frame still leaves one continuous cut. Only the part below the surface is carved, so a
+blade dipped in cuts as far as it went and no further.
 
 Only things that move count, the same list the grass uses: `CharacterBody3D`, `RigidBody3D`,
 `AnimatableBody3D` and `PhysicalBone3D`. The ground, walls and rocks cleared their own snow when the
@@ -193,7 +198,7 @@ Footsteps and the crush of shoved snow use the addon's own `snow_footsteps.tres`
 ## Tests
 
 `tests/` holds the unit tests: stamp packing against the shader's struct, the window's snapping and
-scrolling, the height providers, the FootStamper's decisions, the drag on bodies ploughing through, that the demo loads and reaches only the addons it depends on, and that every shader compiles and every
+scrolling, the height providers, the FootStamper's decisions, the drag on bodies ploughing through, a sword blade pressed along its length and swept between frames, that the demo loads and reaches only the addons it depends on, and that every shader compiles and every
 global it reads is declared. They run headless, where the compute half is off by design.
 
 ## Licence
