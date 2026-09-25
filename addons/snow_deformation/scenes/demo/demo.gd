@@ -11,6 +11,9 @@ extends Node3D
 ## leaves them alone.
 const REFILL_GEO: float = 0.02
 const REFILL_MASK: float = 0.06
+## F4's waist-deep snow, the depth of Red Dead Redemption 2's opening: up to the mannequin's hips, so the legs
+## plough a trench rather than leave prints.
+const DEEP_SNOW: float = 0.95
 
 @export var snow: SnowDeformation
 @export var readout: Label
@@ -19,6 +22,8 @@ const REFILL_MASK: float = 0.06
 @export var weather: Node
 
 var _refilling: bool = false
+## The scene's own depth, which F4 goes back to.
+var _normal_depth: float = -1.0
 
 
 func _process(_delta: float) -> void:
@@ -36,6 +41,10 @@ func _unhandled_input(event: InputEvent) -> void:
 			KEY_F3:
 				_refilling = not _refilling
 				_apply_refill()
+			KEY_F4:
+				if _normal_depth < 0.0:
+					_normal_depth = snow.snow_depth
+				snow.snow_depth = _normal_depth if is_equal_approx(snow.snow_depth, DEEP_SNOW) else DEEP_SNOW
 
 
 ## How hard it is snowing, 0 to 1. Everything works without Weather FX in the scene; then it is simply
@@ -64,6 +73,7 @@ func _update_readout() -> void:
 		"%d x %d texels over %.0f m  (%.1f cm per texel)" % [snow.resolution, snow.resolution, snow.world_size, snow.world_size / float(snow.resolution) * 100.0],
 		"stamps this frame: %d    dropped: %d" % [snow.stamps_last_frame, snow.dropped_stamps],
 		"refill from snowfall: %s" % ("%.0f%%" % (_precipitation() * 100.0) if _refilling else "off"),
+		"snow depth: %.0f cm" % (snow.snow_depth * 100.0),
 		"",
-		"F1 overlay    F2 clear    F3 refill",
+		"F1 overlay    F2 clear    F3 refill    F4 waist-deep snow",
 	])

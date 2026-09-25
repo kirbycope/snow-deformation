@@ -14,6 +14,10 @@ class RecordingSnow:
 	extends SnowDeformation
 	var footprints: Array[Dictionary] = []
 	var capsules: Array[Dictionary] = []
+	var kicks: Array[Dictionary] = []
+
+	func kick(at: Vector3, velocity: Vector3, clumps: int) -> void:
+		kicks.append({"at": at, "velocity": velocity, "clumps": clumps})
 
 	func add_footprint(pos: Vector3, yaw: float, half_width: float, half_length: float, depth: float, rim_factor: float = 0.35, wall_softness: float = 0.25, rim_width: float = 0.4) -> void:
 		footprints.append({"pos": pos, "yaw": yaw, "half_width": half_width, "half_length": half_length, "depth": depth})
@@ -142,3 +146,85 @@ func test_a_stamper_with_no_sound_assigned_stays_silent_and_does_not_break() -> 
 	assert_eq((stamper.get("_voices") as Array).size(), 0, "without building a voice it will never use")
 
 #endregion
+
+
+#region Kicked snow
+
+func test_a_stride_through_the_snow_kicks_it_forward() -> void:
+	var stamper: Node = FOOT_STAMPER.new()
+	add_child_autofree(stamper)
+	stamper.set("_dt", 1.0 / 60.0)
+	var ankle: Vector3 = Vector3(0.0, 0.1, 0.0)
+	var thrown: int = 0
+	for frame: int in 30: # half a second at 3 m/s, 1.5 m
+		ankle.z -= 0.05
+		thrown += stamper.call("_kick", 0, ankle, 0.4)
+	var owed: float = 1.5 * stamper.kick_per_metre
+	assert_between(float(thrown), owed - float(_snow.kick_burst), owed, "kick_per_metre clumps for every metre the foot moved, thrown a kick at a time")
+	assert_eq(int(_snow.kicks[0]["clumps"]), _snow.kick_burst, "a whole kick each time")
+	var last: Dictionary = _snow.kicks.back()
+	assert_almost_eq((last["at"] as Vector3).y, 0.4, 0.001, "thrown from the snow's surface above the foot")
+	assert_lt((last["velocity"] as Vector3).z, 0.0, "the way the foot was going")
+
+
+func test_a_planted_foot_kicks_nothing() -> void:
+	var stamper: Node = FOOT_STAMPER.new()
+	add_child_autofree(stamper)
+	stamper.set("_dt", 1.0 / 60.0)
+	for frame: int in 30:
+		stamper.call("_kick", 0, Vector3(0.0, 0.1, 0.0), 0.4)
+	assert_eq(_snow.kicks.size(), 0, "Standing still throws no snow")
+
+
+func test_a_teleported_foot_kicks_nothing() -> void:
+	var stamper: Node = FOOT_STAMPER.new()
+	add_child_autofree(stamper)
+	stamper.set("_dt", 1.0 / 60.0)
+	stamper.call("_kick", 0, Vector3.ZERO, 0.4)
+	assert_eq(stamper.call("_kick", 0, Vector3(30.0, 0.0, 0.0), 0.4), 0, "Thirty metres in a frame is a teleport, not a stride")
+
+#endregion
+
+
+#region Legs
+
+## A leg straight down under a hip 0.9 m up: thigh to 0.5, shin to 0.1, in snow 0.4 deep.
+func _leg() -> Node:
+	var body := Node3D.new()
+	add_child_autofree(body)
+	var skeleton := Skeleton3D.new()
+	body.add_child(skeleton)
+	var hip: int = skeleton.add_bone("LeftUpperLeg")
+	skeleton.set_bone_rest(hip, Transform3D(Basis.IDENTITY, Vector3(0.0, 0.9, 0.0)))
+	var knee: int = skeleton.add_bone("LeftLowerLeg")
+	skeleton.set_bone_parent(knee, hip)
+	skeleton.set_bone_rest(knee, Transform3D(Basis.IDENTITY, Vector3(0.0, -0.4, 0.0)))
+	var foot: int = skeleton.add_bone("LeftFoot")
+	skeleton.set_bone_parent(foot, knee)
+	skeleton.set_bone_rest(foot, Transform3D(Basis.IDENTITY, Vector3(0.0, -0.4, 0.0)))
+	skeleton.reset_bone_poses()
+	var stamper: Node = FOOT_STAMPER.new()
+	var feet: Array[StringName] = [&"LeftFoot"]
+	stamper.foot_bones = feet
+	body.add_child(stamper)
+	return stamper
+
+
+func test_the_part_of_a_leg_under_the_snow_ploughs_it() -> void:
+	var stamper: Node = _leg()
+	stamper.call("_stamp_legs")
+	assert_eq(_snow.capsules.size(), 1, "The thigh is clear of the snow; the shin is in it")
+	var cut: Dictionary = _snow.capsules[0]
+	assert_almost_eq(cut["radius"] as float, stamper.leg_radius, 0.0001, "as thick as the leg")
+	var top_end: float = maxf((cut["a"] as Vector3).y, (cut["b"] as Vector3).y)
+	assert_lt(top_end, 0.4 + 0.001, "and cut no higher than the surface")
+
+
+func test_deeper_snow_takes_the_thigh_too() -> void:
+	_snow.snow_depth = 0.95
+	var stamper: Node = _leg()
+	stamper.call("_stamp_legs")
+	assert_eq(_snow.capsules.size(), 2, "Waist-deep, the thigh ploughs as well, which is what makes a trench of a stride")
+
+#endregion
+

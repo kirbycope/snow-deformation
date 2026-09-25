@@ -60,7 +60,10 @@ const _OVERLAY_SIZE: Vector2 = Vector2(256.0, 256.0)
 
 @export_group("Snow")
 ## Undeformed snow thickness in metres. A stamp can never dig deeper than this.
-@export_range(0.0, 2.0, 0.01) var snow_depth: float = 0.35
+@export_range(0.0, 2.0, 0.01) var snow_depth: float = 0.35:
+	set(value):
+		snow_depth = value
+		_on_depth_changed()
 ## Ceiling on the berm a stamp may raise, in metres.
 @export_range(0.0, 1.0, 0.01) var max_rim_height: float = 0.12
 ## Where the ground under the snow is. Left empty, a flat provider at y = 0 is used.
@@ -122,6 +125,16 @@ const _OVERLAY_SIZE: Vector2 = Vector2(256.0, 256.0)
 ## Crushes that may be heard at once. Past this the quietest are simply not played.
 @export_range(1, 12, 1) var press_voices: int = 4
 
+@export_group("Kicked snow")
+## Throw clumps of snow forward from feet moving through it (see [method kick]).
+@export var kick_snow: bool = true
+## Clumps in one kick.
+@export_range(1, 64, 1) var kick_burst: int = 8
+## Kicks that can be in the air at once: a pool of one-shot emitters, reused in turn.
+@export_range(1, 64, 1) var kick_pool: int = 24
+## Size of one clump.
+@export_range(0.01, 0.2, 0.005, "suffix:m") var kick_clump_size: float = 0.04
+
 @export_group("Packed snow floor")
 ## Physics layers of a collider laid on the snow's surface. A body that masks one of them rides on the
 ## snow, as a [Snowball] or a sled should; everything else (feet, hooves, a beach ball, a round) sinks
@@ -166,6 +179,9 @@ var _surface_material: ShaderMaterial = null
 var _overlay: TextureRect = null
 var _press_area: Area3D = null
 var _floor: StaticBody3D = null
+var _spray: Node3D = null
+var _kicks: Array[GPUParticles3D] = []
+var _next_kick: int = 0
 var _floor_shape: HeightMapShape3D = null
 var _floor_centre: Vector2 = Vector2(INF, INF)
 ## Bodies currently inside the press area, and the radius and underside each one was measured at.
@@ -218,6 +234,8 @@ func _ready() -> void:
 	_resolve_focus()
 	_build_press_area()
 	_build_floor()
+	if kick_snow:
+		_build_spray()
 	if create_surface:
 		_build_surface()
 	_snap_origin(true)
@@ -448,7 +466,7 @@ func _press_body(body: Node3D) -> bool:
 		var count: int = clampi(ceili(travel / maxf(radius * 0.5, 0.005)), 1, MAX_SWEEP_STEPS)
 		for i: int in range(1, count + 1):
 			var t: float = float(i) / float(count)
-			if _press_segment((was["a"] as Vector3).lerp(seg["a"], t), (was["b"] as Vector3).lerp(seg["b"], t), radius):
+			if press_segment((was["a"] as Vector3).lerp(seg["a"], t), (was["b"] as Vector3).lerp(seg["b"], t), radius):
 				cut = true
 	return cut
 
@@ -456,7 +474,7 @@ func _press_body(body: Node3D) -> bool:
 ## Presses the part of a segment [param radius] thick, from [param a] to [param b], that is under the
 ## snow. One end above the surface is moved to where the segment crosses it, so a blade dipped into the
 ## snow cuts only as far as it went in rather than a trench stretched up to the hilt.
-func _press_segment(a: Vector3, b: Vector3, radius: float) -> bool:
+func press_segment(a: Vector3, b: Vector3, radius: float) -> bool:
 	var low_a: Vector3 = a - Vector3(0.0, radius, 0.0)
 	var low_b: Vector3 = b - Vector3(0.0, radius, 0.0)
 	var depth_a: float = get_undeformed_surface_height(Vector2(low_a.x, low_a.z)) - low_a.y
@@ -770,6 +788,83 @@ func _publish_globals() -> void:
 
 #endregion
 
+#region Kicked snow
+
+## The clumps a foot throws: a pool of one-shot emitters, each moved to the foot, aimed and restarted for one kick.
+## Plain one-shots rather than [method GPUParticles3D.emit_particle], which drew nothing here and which the
+## Compatibility renderer does not have.
+func _build_spray() -> void:
+	_spray = Node3D.new()
+	_spray.name = "KickedSnow"
+	add_child(_spray)
+	# A lumpy little sphere lit like the snow it came from; a flat quad read as a grey square.
+	var clump: SphereMesh = SphereMesh.new()
+	clump.radius = kick_clump_size * 0.5
+	clump.height = kick_clump_size * 0.8
+	clump.radial_segments = 6
+	clump.rings = 3
+	var look: StandardMaterial3D = StandardMaterial3D.new()
+	look.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	look.vertex_color_use_as_albedo = true
+	look.albedo_color = Color(0.97, 0.98, 1.0)
+	look.roughness = 0.85
+	look.rim_enabled = true
+	look.rim = 0.4
+	clump.material = look
+	var fade: Gradient = Gradient.new()
+	fade.set_color(0, Color(1.0, 1.0, 1.0, 1.0))
+	fade.set_color(1, Color(1.0, 1.0, 1.0, 0.0))
+	fade.add_point(0.7, Color(1.0, 1.0, 1.0, 1.0))
+	var ramp: GradientTexture1D = GradientTexture1D.new()
+	ramp.gradient = fade
+	for i: int in kick_pool:
+		var emitter: GPUParticles3D = GPUParticles3D.new()
+		emitter.name = "Kick%d" % i
+		emitter.amount = kick_burst
+		emitter.one_shot = true
+		emitter.explosiveness = 0.85
+		emitter.lifetime = 1.1
+		emitter.local_coords = false
+		emitter.emitting = false
+		emitter.visibility_aabb = AABB(Vector3(-4.0, -2.0, -4.0), Vector3(8.0, 6.0, 8.0))
+		var process: ParticleProcessMaterial = ParticleProcessMaterial.new()
+		process.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
+		process.emission_sphere_radius = 0.07
+		process.spread = 25.0
+		process.gravity = Vector3(0.0, -9.8, 0.0)
+		process.damping_min = 0.5 # Air drag on a loose clump.
+		process.damping_max = 1.5
+		process.scale_min = 0.5
+		process.scale_max = 1.4
+		process.angle_min = -180.0
+		process.angle_max = 180.0
+		process.color_ramp = ramp
+		emitter.process_material = process
+		emitter.draw_pass_1 = clump
+		_spray.add_child(emitter)
+		_kicks.append(emitter)
+
+
+## Throws a kick of snow from [param at] (on the snow's surface) along [param velocity] with some lift, as a foot
+## pushed through the snow does. [param clumps] up to [member kick_burst] of them.
+func kick(at: Vector3, velocity: Vector3, clumps: int) -> void:
+	if _kicks.is_empty() or clumps <= 0:
+		return
+	var emitter: GPUParticles3D = _kicks[_next_kick]
+	_next_kick = (_next_kick + 1) % _kicks.size()
+	var speed: float = velocity.length()
+	var lift: Vector3 = Vector3.UP * 1.4
+	var throw: Vector3 = velocity + lift
+	var process: ParticleProcessMaterial = emitter.process_material as ParticleProcessMaterial
+	process.direction = throw.normalized()
+	process.initial_velocity_min = throw.length() * 0.5
+	process.initial_velocity_max = throw.length() * 1.1
+	emitter.amount_ratio = clampf(float(clumps) / float(kick_burst), 0.0, 1.0)
+	emitter.global_position = at
+	emitter.restart()
+
+#endregion
+
 #region Packed snow floor
 
 ## Lays the floor a [Snowball] rides on: a heightmap over the window at the snow's surface less
@@ -819,6 +914,24 @@ func _follow_floor() -> void:
 			heights[z * side + x] = get_floor_height(at)
 	_floor_shape.map_data = heights
 	_floor.global_position = Vector3(centre.x, 0.0, centre.y)
+
+
+## Everything that depends on the depth, when it changes on a live node: the globals every material reads, the
+## floor, the surface mesh's bounds, and the tracks, which were carved into snow of another depth.
+func _on_depth_changed() -> void:
+	if not is_inside_tree() or Engine.is_editor_hint():
+		return
+	_publish_globals()
+	_floor_centre = Vector2(INF, INF)
+	_follow_floor()
+	if _surface != null and is_instance_valid(_surface):
+		var plane: PlaneMesh = _surface.mesh as PlaneMesh
+		plane.custom_aabb = AABB(
+			Vector3(-surface_size * 0.5, -snow_depth - 1.0, -surface_size * 0.5),
+			Vector3(surface_size, snow_depth + max_rim_height + 2.0, surface_size)
+		)
+		_surface.extra_cull_margin = snow_depth + max_rim_height + 1.0
+	clear()
 
 
 ## Height of the packed snow floor at [param xz]: the undisturbed surface less [member floor_sink].

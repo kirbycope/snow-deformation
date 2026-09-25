@@ -12,6 +12,11 @@ extends Node
 ## max(), so a planted foot re-stamping the same hole changes nothing, while a sliding one lays down a
 ## drag mark for free.
 ##
+## In deep snow the legs plough as well: [member leg_bones] names bone pairs pressed as capsules
+## wherever they are under the surface, so a character wading through snow up to the thigh cuts a trench
+## rather than a line of post holes. A foot moving through the snow throws clumps of it forward
+## ([method SnowDeformation.kick]).
+##
 ## For feet to sink at all, the character's own collision has to rest on the ground *underneath* the
 ## snow rather than on top of it. The snow surface mesh carries no collider, so this is the default.
 
@@ -44,6 +49,25 @@ extends Node
 ## How high the berm around a print stands, as a fraction of its depth.
 @export_range(0.0, 1.0, 0.01) var rim_factor: float = 0.35
 
+@export_group("Legs")
+## Pairs of bones, each pair one segment of a leg, pressed into the snow as a capsule wherever it is below the
+## surface. The humanoid default is thigh and shin on both sides. A pair naming a bone the skeleton lacks is
+## skipped, so a horse or a rig with other names simply leaves prints.
+@export var leg_bones: Array[StringName] = [
+	&"LeftUpperLeg", &"LeftLowerLeg", &"LeftLowerLeg", &"LeftFoot",
+	&"RightUpperLeg", &"RightLowerLeg", &"RightLowerLeg", &"RightFoot",
+]
+## Half the thickness of a leg, and of the trench it cuts.
+@export_range(0.02, 0.3, 0.005, "suffix:m") var leg_radius: float = 0.08
+
+@export_group("Kicked snow")
+## Clumps a foot throws per metre it moves through the snow.
+@export_range(0.0, 100.0, 1.0) var kick_per_metre: float = 14.0
+## A foot slower than this throws nothing: standing still, or shuffling.
+@export_range(0.0, 5.0, 0.05, "suffix:m/s") var kick_min_speed: float = 0.8
+## How much of the foot's own speed the clumps leave with.
+@export_range(0.0, 2.0, 0.05) var kick_speed_factor: float = 0.8
+
 @export_group("Sound")
 ## Played when a foot comes down into the snow. An [AudioStreamRandomizer] holding several crunches is
 ## what stops it repeating. Left empty the stamper is silent, so the addon ships no audio of its own.
@@ -66,6 +90,12 @@ var _voices: Array[AudioStreamPlayer3D] = []
 ## Whether each foot was in the snow last frame. A step is heard on the way in, not every frame it
 ## stays there, which is the difference between walking and a held note.
 var _was_down: Array[bool] = []
+## Resolved leg segments, two bone indices each.
+var _leg_indices: PackedInt32Array = PackedInt32Array()
+## Where each foot was last frame, for its speed, and the clumps it owes, carried between frames.
+var _last_ankle: Array[Vector3] = []
+var _kick_owed: Array[float] = []
+var _dt: float = 1.0 / 60.0
 
 
 func _ready() -> void:
@@ -75,13 +105,25 @@ func _ready() -> void:
 		push_warning("FootStamper on %s found no SnowDeformation in the level, so it will leave no prints." % get_parent().name)
 
 
-func _physics_process(_delta: float) -> void:
+func _physics_process(delta: float) -> void:
 	if not active or _snow == null or not is_instance_valid(_snow):
 		return
+	_dt = maxf(delta, 1e-4)
 	if not _bone_indices.is_empty():
 		_stamp_bones()
+		_stamp_legs()
 	else:
 		_stamp_markers()
+
+
+## The legs, as capsules clipped to the snow's surface: nothing above it, all of what is under it.
+func _stamp_legs() -> void:
+	if _skeleton == null or not is_instance_valid(_skeleton):
+		return
+	for i: int in range(0, _leg_indices.size() - 1, 2):
+		var a: Vector3 = (_skeleton.global_transform * _skeleton.get_bone_global_pose(_leg_indices[i])).origin
+		var b: Vector3 = (_skeleton.global_transform * _skeleton.get_bone_global_pose(_leg_indices[i + 1])).origin
+		_snow.press_segment(a, b, leg_radius)
 
 
 ## Footprints from skeleton bones. Yaw comes from the bone's own basis, so a turning foot turns its print.
@@ -125,6 +167,7 @@ func _stamp(ankle: Vector3, forward: Vector3, foot: int) -> void:
 	if depth < min_depth:
 		_set_down(foot, false)
 		return
+	_kick(foot, ankle, top)
 	if depth >= footstep_min_depth:
 		# Only on the way in. A planted foot re-stamps its own hole every frame, and a crunch every
 		# frame it stood there would be a drone rather than a footstep.
@@ -135,6 +178,28 @@ func _stamp(ankle: Vector3, forward: Vector3, foot: int) -> void:
 	# The manager's yaw convention: forward is (-sin yaw, cos yaw) in world XZ.
 	var yaw: float = atan2(-forward.x, forward.z)
 	_snow.add_footprint(centre, yaw, half_width, half_length, depth, rim_factor)
+
+
+## A foot moving through the snow throws some of it forward, from the surface above it, in proportion to how far
+## it went: a stride kicks a spray, a planted foot nothing. Returns how many clumps it threw.
+func _kick(foot: int, ankle: Vector3, top: float) -> int:
+	while _last_ankle.size() <= foot:
+		_last_ankle.append(ankle)
+		_kick_owed.append(0.0)
+	var moved: Vector3 = ankle - _last_ankle[foot]
+	_last_ankle[foot] = ankle
+	moved.y = 0.0
+	var speed: float = moved.length() / _dt
+	if speed < kick_min_speed or speed > 20.0: # Faster than any stride is a teleport.
+		return 0
+	_kick_owed[foot] += moved.length() * kick_per_metre
+	# Thrown a kick at a time, not a clump a frame: a stride throws a spray.
+	var burst: int = maxi(_snow.kick_burst, 1)
+	if _kick_owed[foot] < float(burst):
+		return 0
+	_kick_owed[foot] -= float(burst)
+	_snow.kick(Vector3(ankle.x, top, ankle.z), moved / _dt * kick_speed_factor, burst)
+	return burst
 
 
 ## Records whether a foot is in the snow and returns true only on the frame it arrives.
@@ -175,6 +240,13 @@ func _resolve_feet() -> void:
 				_bone_indices.append(index)
 			else:
 				push_warning("FootStamper: %s has no bone named %s." % [_skeleton.name, name])
+	if _skeleton != null:
+		for i: int in range(0, leg_bones.size() - 1, 2):
+			var upper: int = _skeleton.find_bone(leg_bones[i])
+			var lower: int = _skeleton.find_bone(leg_bones[i + 1])
+			if upper >= 0 and lower >= 0:
+				_leg_indices.append(upper)
+				_leg_indices.append(lower)
 	if not _bone_indices.is_empty():
 		return
 	for path: NodePath in foot_markers:

@@ -59,6 +59,25 @@ snow.add_sphere(centre, radius, depth)
 snow.clear()
 ```
 
+## Legs in deep snow
+
+In snow deeper than a footprint the legs plough too. `FootStamper.leg_bones` names bone pairs, thigh and
+shin on both sides by default, and each is pressed as a capsule `leg_radius` thick wherever it is under the
+surface, so a character wading through snow up to the hips cuts a trench rather than a line of post holes.
+A pair naming a bone the rig lacks is skipped, so a horse keeps its hoof prints.
+
+## Kicked snow
+
+A foot moving through the snow throws clumps of it forward from the surface above it: `kick_per_metre`
+clumps for every metre it moves, thrown a kick of `SnowDeformation.kick_burst` at a time, at
+`kick_speed_factor` of the foot's own speed with some lift. A planted foot throws nothing, nor does one
+slower than `kick_min_speed`. The manager keeps a pool of `kick_pool` one-shot emitters, each moved to the
+foot, aimed and restarted for one kick; `SnowDeformation.kick(at, velocity, clumps)` throws one by hand.
+`kick_snow` turns it off.
+
+`snow_depth` can be changed on a live node: the globals, the floor and the surface mesh follow, and the
+tracks are cleared, since they were carved into snow of another depth.
+
 ## Physics objects
 
 Anything that moves and has a collider presses the snow, the same way a `GrassField` is pressed: the
@@ -217,6 +236,7 @@ trench. Shove a ball and it ploughs a trough with berms down both sides.
 - **F1** shows the deformation texture: red is the depression, green the berm, blue the disturbed mask.
 - **F2** wipes every track.
 - **F3** lets the falling snow fill tracks back in, at a rate following Weather FX's precipitation.
+- **F4** switches to waist-deep snow (95 cm, the depth of Red Dead Redemption 2's opening) and back.
 
 Footsteps and the crush of shoved snow use the addon's own `snow_footsteps.tres` and `snow_crush.tres`.
 
