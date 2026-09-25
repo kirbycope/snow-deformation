@@ -474,7 +474,7 @@ func _press_body(body: Node3D) -> bool:
 ## Presses the part of a segment [param radius] thick, from [param a] to [param b], that is under the
 ## snow. One end above the surface is moved to where the segment crosses it, so a blade dipped into the
 ## snow cuts only as far as it went in rather than a trench stretched up to the hilt.
-func press_segment(a: Vector3, b: Vector3, radius: float) -> bool:
+func press_segment(a: Vector3, b: Vector3, radius: float, rim_factor: float = 0.35, wall_softness: float = 0.25) -> bool:
 	var low_a: Vector3 = a - Vector3(0.0, radius, 0.0)
 	var low_b: Vector3 = b - Vector3(0.0, radius, 0.0)
 	var depth_a: float = get_undeformed_surface_height(Vector2(low_a.x, low_a.z)) - low_a.y
@@ -489,7 +489,7 @@ func press_segment(a: Vector3, b: Vector3, radius: float) -> bool:
 		else:
 			low_a = at
 			depth_a = 0.0
-	add_capsule(low_a, low_b, radius, clampf(depth_a, 0.0, snow_depth), clampf(depth_b, 0.0, snow_depth))
+	add_capsule(low_a, low_b, radius, clampf(depth_a, 0.0, snow_depth), clampf(depth_b, 0.0, snow_depth), rim_factor, wall_softness)
 	return true
 
 

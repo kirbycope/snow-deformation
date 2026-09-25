@@ -64,7 +64,15 @@ snow.clear()
 In snow deeper than a footprint the legs plough too. `FootStamper.leg_bones` names bone pairs, thigh and
 shin on both sides by default, and each is pressed as a capsule `leg_radius` thick wherever it is under the
 surface, so a character wading through snow up to the hips cuts a trench rather than a line of post holes.
-A pair naming a bone the rig lacks is skipped, so a horse keeps its hoof prints.
+A pair naming a bone the rig lacks is skipped, so a horse keeps its hoof prints. The legs' cuts are laid with
+`leg_wall_softness` 0.65, so their walls slope as deep snow slumps back behind a leg, and a wide capsule between
+the two `hip_bones` (`hip_radius` beyond the joints) pushes the top of the snow aside once it is up to the hips:
+the trench is as wide as the body at the top and narrows to the legs at the bottom, which is how Red Dead
+Redemption 2's troughs look.
+
+Snow above the knee slows the character. `FootStamper` sets the character's `terrain_speed_scale`, when it has
+one (the player controller's Player does), from 1 at `wading_starts` (half hip height) down to `wading_speed`
+(0.4) at the hips, and back to 1 when the stamper leaves the tree.
 
 ## Kicked snow
 

@@ -23,7 +23,7 @@ class RecordingSnow:
 		footprints.append({"pos": pos, "yaw": yaw, "half_width": half_width, "half_length": half_length, "depth": depth})
 
 	func add_capsule(a: Vector3, b: Vector3, radius: float, depth_a: float, depth_b: float, rim_factor: float = 0.35, wall_softness: float = 0.25, rim_width: float = 0.4) -> void:
-		capsules.append({"a": a, "b": b, "radius": radius, "depth_a": depth_a, "depth_b": depth_b})
+		capsules.append({"a": a, "b": b, "radius": radius, "depth_a": depth_a, "depth_b": depth_b, "wall_softness": wall_softness})
 
 
 var _snow: RecordingSnow = null
@@ -212,6 +212,7 @@ func _leg() -> Node:
 
 func test_the_part_of_a_leg_under_the_snow_ploughs_it() -> void:
 	var stamper: Node = _leg()
+	stamper.leg_radius = 0.05 # thin enough that the thigh's end stays clear of snow 0.4 deep
 	stamper.call("_stamp_legs")
 	assert_eq(_snow.capsules.size(), 1, "The thigh is clear of the snow; the shin is in it")
 	var cut: Dictionary = _snow.capsules[0]
@@ -225,6 +226,57 @@ func test_deeper_snow_takes_the_thigh_too() -> void:
 	var stamper: Node = _leg()
 	stamper.call("_stamp_legs")
 	assert_eq(_snow.capsules.size(), 2, "Waist-deep, the thigh ploughs as well, which is what makes a trench of a stride")
+
+
+func test_a_leg_cut_slopes_rather_than_drops_sheer() -> void:
+	var stamper: Node = _leg()
+	stamper.call("_stamp_legs")
+	assert_false(_snow.capsules.is_empty())
+	assert_almost_eq(_snow.capsules[0]["wall_softness"] as float, stamper.leg_wall_softness, 0.0001, "A leg's cut is laid with the leg's own wall softness")
+	assert_gt(stamper.leg_wall_softness, 0.5, "which slopes, since deep snow slumps back behind a leg")
+
+#endregion
+
+
+#region Wading
+
+## A character with the player controller's terrain_speed_scale, and a FootStamper under it.
+func _wader() -> Node:
+	var character_script := GDScript.new()
+	character_script.source_code = "extends Node3D
+var terrain_speed_scale: float = 1.0
+"
+	character_script.reload()
+	var character: Node3D = Node3D.new()
+	character.set_script(character_script)
+	add_child_autofree(character)
+	var stamper: Node = FOOT_STAMPER.new()
+	character.add_child(stamper)
+	return stamper
+
+
+func test_snow_below_the_knee_does_not_slow_a_character() -> void:
+	var stamper: Node = _wader()
+	_snow.snow_depth = 0.35
+	assert_eq(stamper.call("_wade", Vector3(0.0, 0.9, 0.0)), 1.0, "Shin-deep, a walk is a walk")
+	assert_eq(stamper.get_parent().get("terrain_speed_scale"), 1.0)
+
+
+func test_snow_to_the_hips_slows_a_character_to_a_wade() -> void:
+	var stamper: Node = _wader()
+	_snow.snow_depth = 0.95
+	stamper.call("_wade", Vector3(0.0, 0.9, 0.0))
+	assert_almost_eq(stamper.get_parent().get("terrain_speed_scale") as float, stamper.wading_speed, 0.001, "Hip-deep, the character wades")
+
+
+func test_leaving_the_snow_gives_the_speed_back() -> void:
+	var stamper: Node = _wader()
+	_snow.snow_depth = 0.95
+	stamper.call("_wade", Vector3(0.0, 0.9, 0.0))
+	var character: Node = stamper.get_parent()
+	character.remove_child(stamper)
+	stamper.free()
+	assert_eq(character.get("terrain_speed_scale"), 1.0, "A stamper leaving the character does not leave it wading")
 
 #endregion
 

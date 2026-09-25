@@ -58,7 +58,22 @@ extends Node
 	&"RightUpperLeg", &"RightLowerLeg", &"RightLowerLeg", &"RightFoot",
 ]
 ## Half the thickness of a leg, and of the trench it cuts.
-@export_range(0.02, 0.3, 0.005, "suffix:m") var leg_radius: float = 0.08
+@export_range(0.02, 0.3, 0.005, "suffix:m") var leg_radius: float = 0.12
+## How far in from its edge a leg's cut reaches full depth, as a fraction of its radius: 0 is a sheer wall, 1 a V.
+## Deep snow slumps back into the hole behind a leg, so its walls slope.
+@export_range(0.0, 1.0, 0.01) var leg_wall_softness: float = 0.65
+## The two bones either side of the pelvis. A wide capsule between them pushes the top of the snow aside once it
+## is up to the hips, which is what makes a wading trench as wide as the body rather than the legs.
+@export var hip_bones: Array[StringName] = [&"LeftUpperLeg", &"RightUpperLeg"]
+## Half the width of that push, beyond the hip joints.
+@export_range(0.05, 0.6, 0.01, "suffix:m") var hip_radius: float = 0.24
+
+@export_group("Wading")
+## Fraction of normal speed left when the snow is up to the hips; set on the character's
+## [code]terrain_speed_scale[/code] when it has one (the player controller's Player does).
+@export_range(0.05, 1.0, 0.01) var wading_speed: float = 0.4
+## Snow this deep, as a fraction of hip height, starts to slow the character: about the knee.
+@export_range(0.0, 1.0, 0.01) var wading_starts: float = 0.5
 
 @export_group("Kicked snow")
 ## Clumps a foot throws per metre it moves through the snow.
@@ -92,6 +107,7 @@ var _voices: Array[AudioStreamPlayer3D] = []
 var _was_down: Array[bool] = []
 ## Resolved leg segments, two bone indices each.
 var _leg_indices: PackedInt32Array = PackedInt32Array()
+var _hip_indices: PackedInt32Array = PackedInt32Array()
 ## Where each foot was last frame, for its speed, and the clumps it owes, carried between frames.
 var _last_ankle: Array[Vector3] = []
 var _kick_owed: Array[float] = []
@@ -103,6 +119,12 @@ func _ready() -> void:
 	_resolve_feet()
 	if _snow == null:
 		push_warning("FootStamper on %s found no SnowDeformation in the level, so it will leave no prints." % get_parent().name)
+
+
+func _exit_tree() -> void:
+	var character: Node = get_parent()
+	if character != null and "terrain_speed_scale" in character:
+		character.set(&"terrain_speed_scale", 1.0) # Out of the snow's hands, back to normal going.
 
 
 func _physics_process(delta: float) -> void:
@@ -121,9 +143,32 @@ func _stamp_legs() -> void:
 	if _skeleton == null or not is_instance_valid(_skeleton):
 		return
 	for i: int in range(0, _leg_indices.size() - 1, 2):
-		var a: Vector3 = (_skeleton.global_transform * _skeleton.get_bone_global_pose(_leg_indices[i])).origin
-		var b: Vector3 = (_skeleton.global_transform * _skeleton.get_bone_global_pose(_leg_indices[i + 1])).origin
-		_snow.press_segment(a, b, leg_radius)
+		var a: Vector3 = _bone_position(_leg_indices[i])
+		var b: Vector3 = _bone_position(_leg_indices[i + 1])
+		_snow.press_segment(a, b, leg_radius, 0.3, leg_wall_softness)
+	if _hip_indices.size() == 2:
+		var left: Vector3 = _bone_position(_hip_indices[0])
+		var right: Vector3 = _bone_position(_hip_indices[1])
+		_snow.press_segment(left, right, hip_radius, 0.25, 0.85)
+		_wade((left + right) * 0.5)
+
+
+func _bone_position(index: int) -> Vector3:
+	return (_skeleton.global_transform * _skeleton.get_bone_global_pose(index)).origin
+
+
+## Slows the character in snow above the knee, down to [member wading_speed] at the hips, through the
+## character's own [code]terrain_speed_scale[/code] when it has one. Returns the scale it asked for.
+func _wade(hips: Vector3) -> float:
+	var xz: Vector2 = Vector2(hips.x, hips.z)
+	var ground: float = _snow.get_terrain_height(xz)
+	var hip_height: float = maxf(hips.y - ground, 0.1)
+	var submerged: float = clampf(_snow.snow_depth / hip_height, 0.0, 1.0)
+	var scale: float = lerpf(1.0, wading_speed, smoothstep(wading_starts, 1.0, submerged))
+	var character: Node = get_parent()
+	if character != null and "terrain_speed_scale" in character:
+		character.set(&"terrain_speed_scale", scale)
+	return scale
 
 
 ## Footprints from skeleton bones. Yaw comes from the bone's own basis, so a turning foot turns its print.
@@ -247,6 +292,12 @@ func _resolve_feet() -> void:
 			if upper >= 0 and lower >= 0:
 				_leg_indices.append(upper)
 				_leg_indices.append(lower)
+		if hip_bones.size() == 2:
+			var left: int = _skeleton.find_bone(hip_bones[0])
+			var right: int = _skeleton.find_bone(hip_bones[1])
+			if left >= 0 and right >= 0:
+				_hip_indices.append(left)
+				_hip_indices.append(right)
 	if not _bone_indices.is_empty():
 		return
 	for path: NodePath in foot_markers:
