@@ -209,15 +209,28 @@ with ambientCG's Snow 010 A mapped triplanar in its own space (`resources/snowba
 rolls with it and stays the same size as it grows,
 and grows as it rolls over the snow, the way a Zelda snowball does. It picks up a layer `pick_up_depth` (3 cm)
 thick along its width, so it grows quickly while small and more slowly as it gets big: ten metres of rolling takes a
-football to a ball a snowman can stand on, and about thirty-five to `max_radius` (0.6 m, a ball as tall as a Player's
-chest), where it stops growing and rolls on. Held in the hands and pushed through the snow, its underside below the
+football to a ball a snowman can stand on, and it keeps growing for as long as it rolls through snow. There is no
+size limit unless `max_radius` sets one (0, the default, is none). Held in the hands and pushed through the snow, its underside below the
 surface, it gathers snow the same way by the ground it covers, so a ball can be grown by carrying it low and walking.
 Its mass follows its volume at `density`, but it keeps its speed as it grows rather than sharing its momentum with
 the snow it picks up, which held a ball on a hill to a jog: let go at the top of the v3 snow demo's 40 degree hill,
 into the blizzard, a football is rolling at 5 m/s and a metre across by the bottom, 21 m down.
 `rolling_resistance` (0.15) stops one shoved on the flat within a few metres, while a hill of 12 degrees or more
-rolls it away. Wherever it rolls on the snow it leaves its track, as
-wide as it is and as deep as its underside plus the layer it picked up.
+rolls it away. Wherever it rolls on the snow it leaves its track, as wide as it is and as deep as its underside plus
+the layer it picked up, pressed where it touches the snow: on a steep slope the snow straight below its middle is
+lower than that, and a track pressed there vanished.
+
+A rolling ball keeps to the snow. Going fast over a crest or a bump it would fly off the slope, growing nothing and
+leaving no track, so while the floor is within `FLOOR_SNAP` (25 cm) below a ball that was rolling on it, the ball is
+set back on it and loses the speed carrying it away. Off a real drop the floor is further than that and it flies; a
+thrown ball, which was not rolling, is not held.
+
+It takes only so much pushing. A character walking into a rigid body moves it as if the character were infinitely
+heavy, in the physics engine and in the shove the Player gives what it walks into, so a ball the weight of a car
+rolled off at walking pace. The ball cuts what a touching character adds to its speed back to what `push_strength`
+(300 N, about a person's shove) could give it: a football is carried along, a ball a metre across still rolls, and
+one grown past about 1.2 m, whose rolling in the snow resists more than that, will not budge on the flat. Picking it
+up, carrying and throwing it are not limited, and 0 removes the limit.
 
 On packed snow it rolls along the floor without skidding, uphill, downhill or across. The floor's friction keeps it
 rolling; the script only puts a skid right (the surface slipping faster than `SKID_SPEED`, 0.3 m/s), such as a
@@ -231,7 +244,7 @@ floor; the solver pushing a ball back out of the snow every frame had held one o
 It rides on the snow instead of sinking through it, because it masks the manager's floor layer (next
 section). A snowball touching another one locks its rotation, so one set on top of another holds there
 on friction: a snowman is stacked with nothing more than a pickup that can carry a `RigidBody3D`, such
-as the player controller's own pickup and hold. `max_radius` caps the growth.
+as the player controller's own pickup and hold.
 
 A stack holds only until something disturbs it. Anything but another snowball moving into a ball faster than
 `knock_speed` (0.5 m/s: a Player walking into it, a swung sword) knocks it loose, as does another
@@ -266,8 +279,8 @@ collider shifted inside a spinning ball every step braked it to a crawl on any h
 It catches the wind. `SnowDeformation.wind` is in metres per second, and each ball takes air drag on its
 cross-section from it (`Snowball.wind_force`, half rho Cd A v^2 with `drag_coefficient` 0.47). Drag grows with
 the square of the radius and the mass with the cube, so in a strong wind a football rolls off downwind, grows,
-and stops once it is too heavy to push through the snow it has sunk into, which in a 36 m/s storm is not far
-short of `max_radius`.
+and stops once it is too heavy to push through the snow it has sunk into, which in a 36 m/s storm is at about a
+metre across.
 Wire a weather system to `SnowDeformation.set_wind(strength, direction)` in the scene, as both demos wire
 WeatherFX's `wind_changed`; `wind_scale` converts a strength in units of the weather system's own. Both demos
 set it to 0.43, which makes WeatherFX's blizzard (36) a 15.5 m/s wind, a real blizzard's.

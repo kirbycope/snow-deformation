@@ -64,7 +64,7 @@ func test_rolling_ten_metres_makes_a_snowman_base() -> void:
 	assert_between(r, 0.28, 0.38, "Ten metres from a football is a ball a snowman can stand on")
 	for step: int in 2000:
 		r = Snowball.grown(r, 0.01, depth)
-	assert_gt(r, _ball().max_radius * 0.85, "and thirty is near the limit")
+	assert_gt(r, 0.5, "and thirty one taller than a Player's waist")
 
 
 func test_pushed_on_the_flat_it_stops_within_a_few_metres() -> void:
@@ -96,10 +96,13 @@ func test_it_rolls_the_way_it_is_going_without_skidding() -> void:
 	assert_almost_eq(forward_point.length(), 0.0, 0.0001, "so the point touching the snow is still, which is rolling rather than skidding")
 
 
-func test_it_never_grows_past_its_limit() -> void:
+func test_it_has_no_size_limit_unless_given_one() -> void:
 	var ball: Snowball = _ball()
 	ball.radius = 5.0
-	assert_eq(ball.radius, ball.max_radius, "It stops at max_radius")
+	assert_eq(ball.radius, 5.0, "By default it grows as big as the snow lets it")
+	ball.max_radius = 0.6
+	ball.radius = 5.0
+	assert_eq(ball.radius, 0.6, "and a max_radius stops it there")
 
 
 func test_it_rides_on_the_packed_snow_floor() -> void:
@@ -397,3 +400,58 @@ func test_a_round_breaks_it_whatever_its_size() -> void:
 	ball.shattered.connect(broke.append.bind(true))
 	ball.register_projectile_hit(null, ball.global_position, Vector3.UP)
 	assert_eq(broke, [true], "Shot, even a snowman's base falls apart")
+
+
+## A slope steepening over its crest: level for a few metres, then falling away ever more steeply.
+class Crest:
+	extends SnowTerrainHeight
+	func height_at(xz: Vector2) -> float:
+		return -maxf(xz.x, 0.0) * maxf(xz.x, 0.0) * 0.06
+
+
+func test_a_fast_ball_keeps_to_the_snow_over_a_crest() -> void:
+	_snow.free()
+	var hill: SnowDeformation = MANAGER.new()
+	hill.snow_depth = 0.35
+	hill.create_surface = false
+	hill.terrain_height_provider = Crest.new()
+	add_child_autofree(hill)
+	await wait_physics_frames(3)
+	var ball: Snowball = SNOWBALL_SCENE.instantiate()
+	ball.radius = 0.3
+	add_child_autofree(ball)
+	ball.break_speed = 0.0
+	ball.global_position = Vector3(-4.0, hill.get_floor_height(Vector2(-4.0, 0.0)) + 0.31, 0.0)
+	await wait_seconds(0.3)
+	ball.linear_velocity = Vector3(9.0, 0.0, 0.0)
+	var airborne: int = 0
+	for frame: int in 60:
+		await wait_physics_frames(1)
+		if not ball._on_snow:
+			airborne += 1
+	assert_lt(airborne, 6, "Rolled fast over the crest, it stays on the snow, growing and leaving its track, rather than flying off")
+
+
+## How far a ball [param of_radius] goes in a second of a character leaning on it from the west and adding 20 cm/s of
+## eastward speed to it every step, as the physics engine does for a character moving into a rigid body.
+func _shoved_by_a_character(of_radius: float) -> float:
+	await wait_physics_frames(2)
+	var ball: Snowball = _ball()
+	ball.radius = of_radius
+	ball.global_position = Vector3(0.0, _snow.get_floor_height(Vector2.ZERO) + of_radius, 0.0)
+	var walker: CharacterBody3D = CharacterBody3D.new()
+	add_child_autofree(walker)
+	walker.global_position = ball.global_position + Vector3(-of_radius - 0.3, 0.0, 0.0)
+	await wait_seconds(0.5)
+	ball.call("_on_body_entered", walker) # leaning on it
+	var start: float = ball.global_position.x
+	for step: int in 60:
+		walker.global_position = ball.global_position + Vector3(-of_radius - 0.3, 0.0, 0.0)
+		ball.linear_velocity.x += 0.2
+		await wait_physics_frames(1)
+	return ball.global_position.x - start
+
+
+func test_a_character_shoves_a_football_along_but_not_a_big_ball() -> void:
+	assert_gt(await _shoved_by_a_character(0.11), 1.0, "A character walking into a football carries it along")
+	assert_lt(await _shoved_by_a_character(0.7), 0.2, "one 1.4 m across is too heavy to push")
