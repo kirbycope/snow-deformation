@@ -19,8 +19,8 @@ extends RigidBody3D
 ## A big one sinks. Snow bears [member snow_strength] pascals, so a ball settles in until the footprint it
 ## presses carries its weight: a football barely marks it, a snowman's base goes in a hand's depth. Sunk, it
 ## ploughs, and its rolling resistance climbs with the depth, so a ball slows as it grows and at last stops.
-## The collider keeps the ball's shape above the snow and only its underside rides higher: a sphere
-## [member sink] / 2 smaller and as much higher, kept upright however the ball turns.
+## The collider is a sphere [member sink] / 2 smaller, riding on the floor, and the ball is drawn as much lower, so
+## its underside is in the snow while its top still meets a ball stacked on it.
 ##
 ## It catches the manager's [member SnowDeformation.wind] as air drag on its cross-section, so in a strong
 ## wind a small ball rolls off downwind, picks up snow, and stops once it is too heavy for the wind to push
@@ -47,10 +47,10 @@ extends RigidBody3D
 ## Growth stops here.
 @export_range(0.1, 2.0, 0.01, "suffix:m") var max_radius: float = 0.6
 ## How thick a layer of snow the ball picks up as it rolls over it.
-@export_range(0.0, 0.2, 0.005, "suffix:m") var pick_up_depth: float = 0.04
-## Snow's rolling resistance: the ball loses this times gravity in speed every second it rolls on snow,
-## so one let go of stops within a few metres instead of rolling on across the whole field.
-@export_range(0.0, 1.0, 0.01) var rolling_resistance: float = 0.25
+@export_range(0.0, 0.2, 0.001, "suffix:m") var pick_up_depth: float = 0.01
+## Snow's rolling resistance: the ball loses this times gravity in speed every second it rolls on snow, so a
+## push on the flat stops it within a couple of metres while a hill of 15 degrees or more rolls it away.
+@export_range(0.0, 1.0, 0.01) var rolling_resistance: float = 0.1
 ## How fast anything but another snowball has to be moving into a ball to knock it loose from a stack.
 @export_range(0.0, 5.0, 0.05, "suffix:m/s") var knock_speed: float = 0.5
 ## Another snowball knocks it loose only when it comes in faster than this: thrown, not set down on it to stack.
@@ -59,21 +59,24 @@ extends RigidBody3D
 @export_range(0.0, 5.0, 0.05, "suffix:m/s") var hold_speed: float = 0.5
 ## Seconds a knocked ball is free to roll before it may hold on another again.
 @export_range(0.0, 5.0, 0.1, "suffix:s") var knocked_time: float = 1.5
-## Stopped this suddenly (its speed falling by this much in one physics step: a landing, a wall, a thrown ball's
-## target) it breaks apart. Being set moving, shoved or struck never breaks it. 0 never breaks.
-@export_range(0.0, 20.0, 0.1, "suffix:m/s") var break_speed: float = 2.5
+## How suddenly a football-sized ball (11 cm across the radius) has to be stopped to break (its speed falling by
+## this much in one physics step: a landing, a wall, a thrown ball's target). A bigger ball is looser and breaks from
+## proportionally less ([method breaks_at]): a football dropped from the hands survives, a snowman's head knocked
+## off its base does not. Being set moving, shoved or struck never breaks it. 0 never breaks.
+@export_range(0.0, 30.0, 0.1, "suffix:m/s") var break_speed: float = 6.0
 ## Seconds the clumps of a broken ball lie in the snow before they melt away.
 @export_range(1.0, 120.0, 1.0, "suffix:s") var clump_life: float = 20.0
 ## Packed snow, in kilograms per cubic metre. The mass is this times the ball's volume.
 @export_range(50.0, 900.0, 10.0, "suffix:kg/m3") var density: float = 250.0
 ## What the snow bears before it gives way, in pascals. A ball sinks until its footprint carries its weight:
 ## fresh powder bears a few hundred, wind-packed snow tens of thousands.
-@export_range(100.0, 50000.0, 100.0, "suffix:Pa") var snow_strength: float = 2000.0
+@export_range(100.0, 50000.0, 100.0, "suffix:Pa") var snow_strength: float = 10000.0
 ## Air drag coefficient; 0.47 is a sphere's.
 @export_range(0.0, 2.0, 0.01) var drag_coefficient: float = 0.47
 
 const AIR_DENSITY: float = 1.29 ## kg/m3, at sea level and freezing.
 const MAX_SINK: float = 0.25 ## The deepest a ball sinks, as a share of its radius.
+const FOOTBALL_RADIUS: float = 0.11 ## A size 5 football's radius, the size [member break_speed] is given for.
 const SINK_RATE: float = 0.25 ## Metres per second a ball settles in, or comes back up once off the snow.
 
 ## How far the ball has sunk into the snow, in metres.
@@ -120,13 +123,21 @@ static func grown(from: float, distance: float, depth: float) -> float:
 
 
 ## The spin of a ball [param of_radius] in radius rolling over the ground at [param velocity] without skidding.
-static func rolling_spin(velocity: Vector3, of_radius: float) -> Vector3:
-	return Vector3.UP.cross(Vector3(velocity.x, 0.0, velocity.z)) / maxf(of_radius, 0.001)
+## On a slope, [param normal] is the floor's, and the ball rolls along the floor rather than along the level.
+static func rolling_spin(velocity: Vector3, of_radius: float, normal: Vector3 = Vector3.UP) -> Vector3:
+	var along: Vector3 = velocity - normal * velocity.dot(normal)
+	return normal.cross(along) / maxf(of_radius, 0.001)
 
 
 ## Speed a ball rolling on snow loses in [param seconds] to [param resistance].
 static func slowed_by(resistance: float, seconds: float) -> float:
 	return resistance * 9.8 * seconds
+
+
+## The sudden stop that breaks a ball [param of_radius] in radius, [param football] being the one that breaks a
+## football: inversely as the radius.
+static func breaks_at(football: float, of_radius: float) -> float:
+	return football * FOOTBALL_RADIUS / maxf(of_radius, 0.01)
 
 
 ## The mass of a ball [param of_radius] in radius at [param at_density].
@@ -160,6 +171,11 @@ func _sink_target() -> float:
 	return minf(minf(sinks_to(radius, density, snow_strength), radius * MAX_SINK), maxf(_snow.snow_depth - _snow.floor_sink, 0.0))
 
 
+## The collider's radius: the ball's, less half its sink.
+func _collider_radius() -> float:
+	return radius - sink * 0.5
+
+
 func _apply_radius() -> void:
 	if _shape and _shape.shape is SphereShape3D:
 		(_shape.shape as SphereShape3D).radius = radius - sink * 0.5
@@ -179,13 +195,16 @@ func _physics_process(delta: float) -> void:
 	if not is_equal_approx(sink, target):
 		sink = move_toward(sink, target, SINK_RATE * delta)
 		_apply_radius()
-	# The collider's underside rides sink higher than the ball's, whichever way up the ball has rolled.
-	if _shape and (sink > 0.0 or _shape.position != Vector3.ZERO):
-		_shape.position = global_basis.orthonormalized().inverse() * Vector3(0.0, sink * 0.5, 0.0)
+	# The ball is drawn sink / 2 lower than the collider, whichever way up it has rolled, so its underside is in the
+	# snow while its top meets a ball stacked on it. The picture moves, not the collider: a collider shifted inside a
+	# spinning body every step braked it to a crawl on any hill.
+	if _mesh and (sink > 0.0 or _mesh.position != Vector3.ZERO):
+		_mesh.position = global_basis.orthonormalized().inverse() * Vector3(0.0, -sink * 0.5, 0.0)
 	# Sunk, it ploughs a trench to its own underside, deeper than the collider riding on the floor reaches. It does not
 	# dig the floor, or it would sink through its own track.
 	if sink > 0.0 and rolled > 0.0 and _snow != null and is_instance_valid(_snow):
-		_snow.press_segment(global_position - linear_velocity * delta, global_position, radius, 0.35, 0.25, false)
+		var drawn: Vector3 = global_position + Vector3.DOWN * sink * 0.5 # where the ball is drawn, sunk
+		_snow.press_segment(drawn - linear_velocity * delta, drawn, radius, 0.35, 0.25, false)
 	if freeze:
 		_was_frozen = true
 	# Held in a stack and moving: what it stood on has gone, so the stack comes down.
@@ -195,11 +214,15 @@ func _physics_process(delta: float) -> void:
 	# Only the authority grows it; the others take the radius from it. A held ball is frozen and grows nothing.
 	if _on_snow and not freeze and radius < max_radius and is_multiplayer_authority():
 		var before: float = mass
+		var reach: float = _collider_radius()
 		radius = grown(radius, rolled, pick_up_depth)
 		# The snow it picked up was standing still, so the ball carries the same momentum in more mass.
 		if mass > before:
 			linear_velocity *= before / mass
 			angular_velocity *= before / mass
+		# Up by as much as the collider grew, so it does not grow into the floor: the solver pushing it back out of
+		# the snow every frame bled away more speed than the snow picked up did.
+		global_position += Vector3.UP * maxf(_collider_radius() - reach, 0.0)
 
 
 func _integrate_forces(state: PhysicsDirectBodyState3D) -> void:
@@ -209,34 +232,39 @@ func _integrate_forces(state: PhysicsDirectBodyState3D) -> void:
 	# Stopped short: its speed fell sharply between two steps while touching something. Snow breaks from the stop, not
 	# from being shoved, so a Player walking into a snowman knocks it over without breaking the base.
 	if break_speed > 0.0 and not _was_frozen and state.get_contact_count() > 0 and is_multiplayer_authority() \
-			and _last_velocity.length() - state.linear_velocity.length() >= break_speed:
+			and _last_velocity.length() - state.linear_velocity.length() >= breaks_at(break_speed, radius):
 		shatter.rpc()
 		return
 	_last_velocity = state.linear_velocity
 	_was_frozen = false
 	if _snow == null or not is_instance_valid(_snow):
 		return
+	var normal: Vector3 = Vector3.ZERO
 	for i: int in state.get_contact_count():
 		if _snow.is_floor(state.get_contact_collider_object(i)):
 			_on_snow = true
-			break
+			var n: Vector3 = state.get_contact_local_normal(i)
+			normal += n if n.y >= 0.0 else -n
+	normal = normal.normalized() if normal.length_squared() > 1e-6 else Vector3.UP
 	var flat: Vector3 = Vector3(state.linear_velocity.x, 0.0, state.linear_velocity.z)
 	state.linear_velocity += wind_force(_snow.wind - flat, radius, drag_coefficient) / maxf(mass, 0.01) * state.step
 	if not _on_snow:
 		_lift_onto_floor(state)
 		return
-	var along: Vector3 = Vector3(state.linear_velocity.x, 0.0, state.linear_velocity.z)
+	# Along the floor, not the level: on a hillside most of the motion is down the slope.
+	var into: float = state.linear_velocity.dot(normal)
+	var along: Vector3 = state.linear_velocity - normal * into
 	var speed: float = along.length()
 	if speed > 0.0:
 		var resistance: float = maxf(rolling_resistance, sunk_resistance(sink, radius))
 		var kept: float = maxf(speed - slowed_by(resistance, state.step), 0.0) / speed
 		along *= kept
-		state.linear_velocity = Vector3(along.x, state.linear_velocity.y, along.z)
+		state.linear_velocity = along + normal * into
 	# Packed snow grips it, so it rolls without skidding: the spin is whatever its speed makes it. A push
 	# below the middle, which is where a walking Player's legs meet a small ball, would otherwise spin it
 	# backwards, and on the floor's friction that backspin brakes it dead in a few centimetres.
 	if not lock_rotation:
-		state.angular_velocity = rolling_spin(along, radius - sink) # about the point it touches the floor
+		state.angular_velocity = rolling_spin(along, radius - sink * 0.5, normal) # about the point it touches the floor
 
 
 ## Puts a ball that is under the floor back on top of it: one placed in the snow, or one that rested on the

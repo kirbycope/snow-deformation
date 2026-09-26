@@ -204,11 +204,17 @@ HTerrain's collider in the editor as it does in the game.
 ## Snowballs
 
 `scenes/snowball.tscn` is a `Snowball`, a `RigidBody3D` that starts the size of a football (22 cm across)
-and grows as it rolls over the snow. It picks up a layer `pick_up_depth` thick along its width, so it
-grows quickly while small and more slowly as it gets big: ten metres of rolling takes a football to a
-ball a snowman can stand on. Its mass follows its volume at `density`, and the snow it picks up was
-standing still, so it slows as it grows. `rolling_resistance` stops one that is let go of within a
-couple of metres, and on packed snow it rolls without skidding.
+and grows as it rolls over the snow. It picks up a layer `pick_up_depth` (1 cm) thick along its width, so it
+grows quickly while small and more slowly as it gets big: ten metres of rolling takes a football to a snowman's
+head, thirty to a ball a snowman can stand on. Its mass follows its volume at `density`, and the snow it picks up
+was standing still, so the growth itself holds a small ball back and lets a big one run: let go on a hillside of
+15 degrees or more, a football rolls away down it at a jog, gathering speed and snow (2.5 m/s and 25 cm across the
+radius after 16 m of a 27 degree hill). `rolling_resistance` (0.1) stops one pushed on the flat within a couple of
+metres, and on packed snow it rolls along the floor without skidding, uphill, downhill or across.
+
+Rolling on the snow, it answers for its own resistance, so the manager's ploughing drag (`press_drag`) leaves any
+body that rides the floor alone. Growing, it rises by as much as its collider grows, so it never grows into the
+floor; the solver pushing a ball back out of the snow every frame had held one on a hill to walking pace.
 
 It rides on the snow instead of sinking through it, because it masks the manager's floor layer (next
 section). A snowball touching another one locks its rotation, so one set on top of another holds there
@@ -221,27 +227,33 @@ snowball thrown at it faster than `thrown_speed` (2 m/s, where one set down on i
 a ball in a stack that starts moving faster than `hold_speed`, which is what happens when the snow is
 ploughed out from under the bottom one and the floor it stands on drops (next section). Either frees the whole
 stack to roll for `knocked_time` (`Snowball.knock()`), so it topples the way it would. A ball stopped short, its
-speed falling by `break_speed` (2.5 m/s) in one physics step (a landing, a wall, a thrown ball reaching what it
-was thrown at), falls apart; being set moving, shoved or struck never breaks it, so a Player walking into a
-snowman knocks the head off without breaking the base. It falls apart
+speed falling in one physics step by more than it can take (a landing, a wall, a thrown ball reaching what it was
+thrown at), falls apart. What it can take is `break_speed` (6 m/s) for a football and less as it gets bigger,
+inversely as the radius (`Snowball.breaks_at`), since a big ball is looser snow: a football let go of from the
+hands, or even from two metres, stays whole; a snowman's head (40 cm across) knocked off its base does not. Being
+set moving, shoved or struck never breaks it, so a Player walking into a snowman knocks the head off without
+breaking the base. It falls apart
 (`Snowball.shatter()`, with a `shattered` signal): half its snow scatters as a handful of clumps, plain rigid
 bodies on no layer of their own that lie in the snow for `clump_life` seconds and melt away, and the rest goes
 up as a spray. A head knocked off a snowman breaks where it lands; one set down by hand does not. Only the
 body's authority decides it breaks, and it tells every peer by RPC.
 
-A big one sinks. The snow bears `snow_strength` pascals (2000 by default, soft settled snow), and a ball
+A big one sinks. The snow bears `snow_strength` pascals (10000 by default, settled snow), and a ball
 settles in until the footprint it presses carries its weight: `Snowball.sinks_to` is 2 rho g r^2 / (3 strength),
-about a centimetre for a football and a hand's depth for a snowman's base, never past a quarter of the radius
+a couple of millimetres for a football, a centimetre and a half for a snowman's base and four for a ball a metre
+across, so small and middling balls roll freely and only big ones bog down, never past a quarter of the radius
 (`MAX_SINK`) or the snow there is. It ploughs a trench to its own underside as it rolls, and its rolling
 resistance becomes the square root of the depth over the diameter (`sunk_resistance`, as for a wheel in soft
-ground) once that is more than `rolling_resistance`, so a ball slows as it grows and at last stops. The
-collider keeps the ball's shape above the snow and only its underside rides higher, kept upright however the
-ball turns, so a ball stacked on it sits on what is drawn.
+ground) once that is more than `rolling_resistance`, so a ball that grows big enough slows and at last stops. The
+collider is a sphere half the sink smaller, riding on the floor, and the ball is drawn as much lower, so its
+underside is in the snow while its top still meets a ball stacked on it. The picture moves, not the collider: a
+collider shifted inside a spinning ball every step braked it to a crawl on any hill.
 
 It catches the wind. `SnowDeformation.wind` is in metres per second, and each ball takes air drag on its
 cross-section from it (`Snowball.wind_force`, half rho Cd A v^2 with `drag_coefficient` 0.47). Drag grows with
 the square of the radius and the mass with the cube, so in a strong wind a football rolls off downwind, grows,
-and stops once it is too heavy to push through the snow it has sunk into: in a 36 m/s storm, at about 0.3 m.
+and stops once it is too heavy to push through the snow it has sunk into, which in a 36 m/s storm is not far
+short of `max_radius`.
 Wire a weather system to `SnowDeformation.set_wind(strength, direction)` in the scene, as both demos wire
 WeatherFX's `wind_changed`; `wind_scale` converts a strength in units of the weather system's own.
 

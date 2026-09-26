@@ -56,21 +56,26 @@ func test_rolling_grows_it_fast_while_small_and_slowly_when_big() -> void:
 	assert_eq(Snowball.grown(0.2, 0.0, 0.04), 0.2, "Standing still it gains nothing")
 
 
-func test_rolling_ten_metres_makes_a_snowman_base() -> void:
+func test_rolling_thirty_metres_makes_a_snowman_base() -> void:
+	var depth: float = _ball().pick_up_depth
 	var r: float = 0.11
 	for step: int in 1000:
-		r = Snowball.grown(r, 0.01, 0.04)
-	assert_between(r, 0.3, 0.45, "Ten metres from a football is a ball a snowman can stand on")
+		r = Snowball.grown(r, 0.01, depth)
+	assert_between(r, 0.18, 0.25, "Ten metres from a football is a snowman's head")
+	for step: int in 2000:
+		r = Snowball.grown(r, 0.01, depth)
+	assert_between(r, 0.3, 0.4, "and thirty a ball it can stand on")
 
 
-func test_let_go_of_it_stops_within_a_few_metres() -> void:
-	var speed: float = 3.0 # A brisk walk's push.
-	var travelled: float = 0.0
-	var dt: float = 1.0 / 60.0
-	while speed > 0.0:
-		travelled += speed * dt
-		speed = maxf(speed - Snowball.slowed_by(0.25, dt), 0.0)
-	assert_between(travelled, 1.0, 3.0, "Snow's rolling resistance stops it in a couple of metres, not across the field")
+func test_pushed_on_the_flat_it_stops_within_a_couple_of_metres() -> void:
+	await wait_physics_frames(2)
+	var ball: Snowball = _ball()
+	ball.global_position = Vector3(0.0, _snow.get_floor_height(Vector2.ZERO) + ball.radius + 0.01, 0.0)
+	await wait_seconds(0.5)
+	ball.linear_velocity = Vector3(3.0, 0.0, 0.0) # a running Player's shove
+	var start: float = ball.global_position.x
+	await wait_seconds(4.0)
+	assert_between(ball.global_position.x - start, 0.5, 3.0, "Snow stops it in a couple of metres, not across the field")
 
 
 func test_a_ball_moved_somewhere_else_does_not_grow() -> void:
@@ -172,8 +177,10 @@ func test_a_big_ball_settles_into_the_snow() -> void:
 	var top: float = _snow.get_floor_height(Vector2.ZERO)
 	ball.global_position = Vector3(0.0, top + 0.45, 0.0)
 	await wait_seconds(1.5)
-	assert_almost_eq(ball.sink, 0.1, 0.01, "It sinks a quarter of its radius")
-	assert_almost_eq(ball.global_position.y - ball.radius, top - ball.sink, 0.02, "and its underside is that far under the floor")
+	assert_almost_eq(ball.sink, Snowball.sinks_to(0.4, ball.density, ball.snow_strength), 0.005, "It sinks until the snow bears it")
+	assert_gt(ball.sink, 0.02, "which for a snowman's base is a few centimetres")
+	var drawn: Node3D = ball.get_node("MeshInstance3D")
+	assert_almost_eq(drawn.global_position.y - ball.radius, top - ball.sink, 0.02, "and the ball as drawn has its underside that far under the floor")
 
 
 func test_ploughing_the_snow_lowers_the_floor_but_a_ball_does_not_dig_its_own() -> void:
@@ -281,3 +288,45 @@ func test_shoving_a_ball_does_not_break_it() -> void:
 	ball.apply_central_impulse(Vector3(5.0, 0.0, 0.0) * ball.mass)
 	await wait_physics_frames(5)
 	assert_true(is_instance_valid(ball), "Set moving at 5 m/s from rest, as a running Player shoves it, it stays whole")
+
+
+## Ground falling away half a metre for every metre east: a 27 degree hillside.
+class Hill:
+	extends SnowTerrainHeight
+	func height_at(xz: Vector2) -> float:
+		return -xz.x * 0.5
+
+
+func test_a_ball_on_a_hill_rolls_away_down_it_and_grows() -> void:
+	_snow.free() # the flat snow every other test stands on; a ball takes the first manager it finds
+	var hill: SnowDeformation = MANAGER.new()
+	hill.snow_depth = 0.35
+	hill.create_surface = false
+	hill.terrain_height_provider = Hill.new()
+	add_child_autofree(hill)
+	await wait_physics_frames(3)
+	var ball: Snowball = SNOWBALL_SCENE.instantiate()
+	add_child_autofree(ball)
+	ball.break_speed = 0.0
+	ball.global_position = Vector3(-10.0, hill.get_floor_height(Vector2(-10.0, 0.0)) + 0.12, 0.0)
+	await wait_seconds(4.0)
+	assert_gt(ball.global_position.x + 10.0, 5.0, "Let go on a hillside it rolls away down it")
+	assert_gt(ball.linear_velocity.length(), 1.5, "gathering speed")
+	assert_gt(ball.radius, 0.15, "and snow")
+
+
+func test_the_bigger_the_ball_the_less_it_takes_to_break() -> void:
+	assert_eq(Snowball.breaks_at(6.0, 0.11), 6.0, "A football breaks at break_speed")
+	assert_almost_eq(Snowball.breaks_at(6.0, 0.22), 3.0, 0.001, "one twice the size at half that")
+	var held_drop: float = sqrt(2.0 * 9.8 * 1.3) # let go of from the hands
+	assert_lt(held_drop, Snowball.breaks_at(6.0, 0.11), "A football let go of from the hands survives the landing")
+	var head_fall: float = sqrt(2.0 * 9.8 * 0.8) # knocked off a snowman's base
+	assert_gt(head_fall, Snowball.breaks_at(6.0, 0.2), "a snowman's head knocked off its base does not")
+
+
+func test_a_football_dropped_from_the_hands_stays_whole() -> void:
+	await wait_physics_frames(2)
+	var ball: Snowball = _ball()
+	ball.global_position = Vector3(2.0, _snow.get_floor_height(Vector2(2.0, 0.0)) + 1.3, 0.0)
+	await wait_seconds(1.5)
+	assert_true(is_instance_valid(ball), "Dropped from holding height it stays whole")

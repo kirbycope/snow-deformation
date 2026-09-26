@@ -540,7 +540,9 @@ func _physics_process(delta: float) -> void:
 		var bottom: float = at.y - measured.y
 		var top: float = get_undeformed_surface_height(Vector2(at.x, at.z))
 		# Every rigid body in the snow is held back, not only those with a stamp slot this frame.
-		if body is RigidBody3D and bottom < top:
+		# A body riding the floor (a snowball) is not held back: it rolls on packed snow and answers for its own
+		# ploughing, and this drag on top of it held a ball rolling down a hill to walking pace.
+		if body is RigidBody3D and bottom < top and not _rides_floor(body):
 			hold_back(body as RigidBody3D, measured.x, clampf(top - bottom, 0.0, snow_depth), delta)
 		if pressed >= max_pressed_bodies:
 			continue
