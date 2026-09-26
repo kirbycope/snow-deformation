@@ -208,10 +208,17 @@ func _press_board() -> void:
 	if body == null:
 		return
 	var at: Vector3 = body.global_position
-	var top: float = _snow.get_undeformed_surface_height(Vector2(at.x, at.z))
-	if at.y > top + contact_margin:
+	var xz: Vector2 = Vector2(at.x, at.z)
+	var top: float = _snow.get_undeformed_surface_height(xz)
+	# On a slope a character's rounded underside rests uphill of its origin, which floats centimetres above the snow,
+	# so a character on the floor is on the snow whatever its origin's height says.
+	var character: CharacterBody3D = body as CharacterBody3D
+	if at.y > top + contact_margin and not (character != null and character.is_on_floor()):
 		_last_board = Vector3.INF
 		return
+	# The board's underside is on what it rides: the packed floor, or the ground under the snow.
+	var rides_floor: bool = character != null and (character.collision_mask & _snow.floor_layer) != 0
+	at.y = minf(at.y, _snow.get_floor_height(xz) if rides_floor else _snow.get_terrain_height(xz))
 	var from: Vector3 = _last_board if _last_board.is_finite() and _last_board.distance_to(at) < 2.0 else at
 	_last_board = at
 	var depth: float = clampf(top - at.y + board_groove, 0.0, _snow.snow_depth)
