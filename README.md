@@ -1,3 +1,5 @@
+![Preview](addons/snow_deformation/assets/snow-deformation.png)
+
 # Snow Deformation for Godot 4.8+
 
 Real-time deformable snow: footprints with berms, ploughed troughs behind physics
