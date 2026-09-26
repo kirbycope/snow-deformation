@@ -432,11 +432,11 @@ func _build_press_area() -> void:
 	_press_area.collision_mask = press_mask
 	var shape: CollisionShape3D = CollisionShape3D.new()
 	var box: BoxShape3D = BoxShape3D.new()
-	# The whole deformable window, and tall enough that a body falling into the snow is already being
-	# tracked by the time it arrives.
-	box.size = Vector3(world_size, snow_depth + 8.0, world_size)
+	# The whole deformable window, centred on the focus's height and as tall as the window is wide, so a body on a
+	# hillside up to 45 degrees above or below the focus is still pressed, and one falling into the snow is already
+	# being tracked when it arrives. At a fixed height it missed everything more than four metres up a hill.
+	box.size = Vector3(world_size, world_size + snow_depth + 10.0, world_size)
 	shape.shape = box
-	shape.position = Vector3(0.0, snow_depth - box.size.y * 0.5 + 2.0, 0.0)
 	_press_area.add_child(shape)
 	_press_area.body_entered.connect(_on_press_body_entered)
 	_press_area.body_exited.connect(_on_press_body_exited)
@@ -447,7 +447,8 @@ func _build_press_area() -> void:
 func _follow_press_area() -> void:
 	if _press_area == null or not is_instance_valid(_press_area):
 		return
-	_press_area.global_position = Vector3(_origin.x + world_size * 0.5, 0.0, _origin.y + world_size * 0.5)
+	var height: float = _focus.global_position.y if _focus != null and is_instance_valid(_focus) else global_position.y
+	_press_area.global_position = Vector3(_origin.x + world_size * 0.5, height, _origin.y + world_size * 0.5)
 
 
 func _on_press_body_entered(body: Node3D) -> void:

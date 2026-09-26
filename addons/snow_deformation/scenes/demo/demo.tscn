@@ -102,6 +102,7 @@ shape = SubResource("GroundShape")
 
 [node name="SnowDeformation" type="Node3D" parent="."]
 script = ExtResource("2_snow")
+wind_scale = 0.43
 resolution = 2048
 world_size = 48.0
 snow_depth = 0.35

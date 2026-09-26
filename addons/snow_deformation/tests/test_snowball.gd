@@ -315,6 +315,33 @@ func test_a_ball_on_a_hill_rolls_away_down_it_and_grows() -> void:
 	assert_gt(ball.radius, 0.15, "and snow")
 
 
+## A steep hillside easing off as it goes down, 40 degrees at the top: the floor over it bends at every cell.
+class CurvedHill:
+	extends SnowTerrainHeight
+	func height_at(xz: Vector2) -> float:
+		return -xz.x * 0.84 + xz.x * xz.x * 0.01
+
+
+func test_a_ball_rolling_down_a_curved_hill_keeps_gathering_speed() -> void:
+	_snow.free()
+	var hill: SnowDeformation = MANAGER.new()
+	hill.snow_depth = 0.35
+	hill.create_surface = false
+	hill.terrain_height_provider = CurvedHill.new()
+	add_child_autofree(hill)
+	await wait_physics_frames(3)
+	var ball: Snowball = SNOWBALL_SCENE.instantiate()
+	ball.pick_up_depth = 0.0 # rolling alone, without the snow it picks up holding it back
+	ball.radius = 0.2
+	add_child_autofree(ball)
+	ball.break_speed = 0.0
+	ball.global_position = Vector3(0.0, hill.get_floor_height(Vector2.ZERO) + 0.3, 0.0)
+	await wait_seconds(2.5)
+	# Rolling, 5/7 of gravity along a slope of about 37 degrees, less the snow's resistance: 7.5 m/s by now. A spin set
+	# every step instead of left to the floor's friction held it to 6.4.
+	assert_gt(ball.linear_velocity.length(), 7.0, "It keeps gathering speed as a rolling ball does, not held to a jog")
+
+
 func test_a_knocked_ball_breaks_from_less_than_one_let_go_of() -> void:
 	var ball: Snowball = _ball()
 	var held_drop: float = sqrt(2.0 * 9.8 * 1.6) # let go of from the hands, high
@@ -335,3 +362,14 @@ func test_any_ball_dropped_from_the_hands_stays_whole() -> void:
 	await wait_seconds(2.0)
 	for ball: Snowball in balls:
 		assert_true(is_instance_valid(ball), "Dropped a metre and a half it stays whole, whatever its size")
+
+
+func test_a_rolling_ball_leaves_its_track() -> void:
+	await wait_physics_frames(2)
+	var ball: Snowball = _ball()
+	ball.global_position = Vector3(0.0, _snow.get_floor_height(Vector2.ZERO) + ball.radius + 0.01, 0.0)
+	await wait_seconds(0.5)
+	var before: int = _snow.stamps_total
+	ball.linear_velocity = Vector3(2.0, 0.0, 0.0)
+	await wait_physics_frames(10)
+	assert_gt(_snow.stamps_total, before + 5, "Rolling on the snow it presses its track every step, sunk or not")

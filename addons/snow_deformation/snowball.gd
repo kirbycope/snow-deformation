@@ -81,6 +81,7 @@ extends RigidBody3D
 const AIR_DENSITY: float = 1.29 ## kg/m3, at sea level and freezing.
 const MAX_SINK: float = 0.25 ## The deepest a ball sinks, as a share of its radius.
 const SINK_RATE: float = 0.25 ## Metres per second a ball settles in, or comes back up once off the snow.
+const SKID_SPEED: float = 0.3 ## Metres per second its surface may slip over the snow before it is set rolling.
 
 ## How far the ball has sunk into the snow, in metres.
 var sink: float = 0.0
@@ -203,10 +204,11 @@ func _physics_process(delta: float) -> void:
 	# spinning body every step braked it to a crawl on any hill.
 	if _mesh and (sink > 0.0 or _mesh.position != Vector3.ZERO):
 		_mesh.position = global_basis.orthonormalized().inverse() * Vector3(0.0, -sink * 0.5, 0.0)
-	# Sunk, it ploughs a trench to its own underside, deeper than the collider riding on the floor reaches. It does not
-	# dig the floor, or it would sink through its own track.
-	if sink > 0.0 and rolled > 0.0 and _snow != null and is_instance_valid(_snow):
-		var drawn: Vector3 = global_position + Vector3.DOWN * sink * 0.5 # where the ball is drawn, sunk
+	# Rolling on the snow it leaves its track, as wide as it is: down to its own underside, which is below the floor it
+	# rides by as much as it has sunk, and the layer it picked up besides. It does not dig the floor, or it would sink
+	# through its own track.
+	if _on_snow and rolled > 0.0 and _snow != null and is_instance_valid(_snow):
+		var drawn: Vector3 = global_position + Vector3.DOWN * (sink * 0.5 + pick_up_depth)
 		_snow.press_segment(drawn - linear_velocity * delta, drawn, radius, 0.35, 0.25, false)
 	if freeze:
 		_was_frozen = true
@@ -219,10 +221,11 @@ func _physics_process(delta: float) -> void:
 		var before: float = mass
 		var reach: float = _collider_radius()
 		radius = grown(radius, rolled, pick_up_depth)
-		# The snow it picked up was standing still, so the ball carries the same momentum in more mass.
+		# The snow it picked up was standing still, so the ball carries the same momentum in more mass, and spins as a
+		# ball that size rolling at that speed does.
 		if mass > before:
 			linear_velocity *= before / mass
-			angular_velocity *= before / mass
+			angular_velocity *= before / mass * reach / maxf(_collider_radius(), 0.001)
 		# Up by as much as the collider grew, so it does not grow into the floor: the solver pushing it back out of
 		# the snow every frame bled away more speed than the snow picked up did.
 		global_position += Vector3.UP * maxf(_collider_radius() - reach, 0.0)
@@ -263,11 +266,14 @@ func _integrate_forces(state: PhysicsDirectBodyState3D) -> void:
 		var kept: float = maxf(speed - slowed_by(resistance, state.step), 0.0) / speed
 		along *= kept
 		state.linear_velocity = along + normal * into
-	# Packed snow grips it, so it rolls without skidding: the spin is whatever its speed makes it. A push
-	# below the middle, which is where a walking Player's legs meet a small ball, would otherwise spin it
-	# backwards, and on the floor's friction that backspin brakes it dead in a few centimetres.
+	# Packed snow grips it, so it rolls without skidding. The floor's friction keeps it rolling on its own; only a
+	# skid is put right, such as a push below the middle, which is where a walking Player's legs meet a small ball,
+	# spinning it backwards so that the backspin brakes it dead in a few centimetres. Setting the spin every step
+	# instead fought the solver at each edge of the floor's cells and held a ball on a hill to a jog.
 	if not lock_rotation:
-		state.angular_velocity = rolling_spin(along, radius - sink * 0.5, normal) # about the point it touches the floor
+		var rolling: Vector3 = rolling_spin(along, _collider_radius(), normal) # about the point it touches the floor
+		if (state.angular_velocity - rolling).length() * _collider_radius() > SKID_SPEED:
+			state.angular_velocity = rolling
 
 
 ## Puts a ball that is under the floor back on top of it: one placed in the snow, or one that rested on the

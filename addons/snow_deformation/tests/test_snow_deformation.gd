@@ -599,3 +599,20 @@ func test_a_stamper_anywhere_else_finds_it_through_the_group() -> void:
 	assert_true(_snow.is_in_group(SnowDeformation.GROUP), "because every manager joins the group")
 
 #endregion
+
+
+## The press area follows the focus up and down hills: at a fixed height it missed every body more than four metres
+## up a hillside, so nothing up there pressed the snow.
+func test_the_press_area_follows_the_focus_up_a_hill() -> void:
+	var target: Node3D = Node3D.new()
+	add_child_autofree(target)
+	target.global_position = Vector3(3.0, 12.0, -2.0)
+	var snow: SnowDeformation = MANAGER.new()
+	snow.create_surface = false
+	snow.focus_path = target.get_path()
+	add_child_autofree(snow)
+	await wait_process_frames(2)
+	var area: Area3D = snow.get_node("PressArea") as Area3D
+	assert_almost_eq(area.global_position.y, 12.0, 0.001, "At the focus's height")
+	var box: BoxShape3D = (area.get_child(0) as CollisionShape3D).shape as BoxShape3D
+	assert_gte(box.size.y, snow.world_size, "and as tall as the window is wide, for hillsides above and below it")
