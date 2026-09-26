@@ -279,8 +279,7 @@ collider shifted inside a spinning ball every step braked it to a crawl on any h
 It catches the wind. `SnowDeformation.wind` is in metres per second, and each ball takes air drag on its
 cross-section from it (`Snowball.wind_force`, half rho Cd A v^2 with `drag_coefficient` 0.47). Drag grows with
 the square of the radius and the mass with the cube, so in a strong wind a football rolls off downwind, grows,
-and stops once it is too heavy to push through the snow it has sunk into, which in a 36 m/s storm is at about a
-metre across.
+and stops once it is too heavy to push through the snow it has sunk into.
 Wire a weather system to `SnowDeformation.set_wind(strength, direction)` in the scene, as both demos wire
 WeatherFX's `wind_changed`; `wind_scale` converts a strength in units of the weather system's own. Both demos
 set it to 0.43, which makes WeatherFX's blizzard (36) a 15.5 m/s wind, a real blizzard's.
