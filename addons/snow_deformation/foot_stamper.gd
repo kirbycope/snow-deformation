@@ -92,6 +92,22 @@ extends Node
 ## A foot has to sink at least this deep to be heard, so brushing the surface is silent.
 @export_range(0.0, 0.5, 0.01, "suffix:m") var footstep_min_depth: float = 0.05
 
+@export_group("Surfing")
+## The character's property that is true while it surfs down the snow on a shield or a board. It is read by name, so
+## the character needs nothing from this addon; the player controller's Player calls it is_shield_surfing. While it
+## is true the feet leave no prints and the board cuts a groove instead.
+@export var surfing_property: StringName = &"is_shield_surfing"
+## Width and length of what is surfed on, in metres. A shield is about half a metre across.
+@export var board_size: Vector2 = Vector2(0.5, 0.75)
+## How much deeper than the board's underside its groove is pressed, so a board skimming the top still marks it.
+@export_range(0.0, 0.2, 0.005, "suffix:m") var board_groove: float = 0.02
+## While surfing, the character rides the packed-snow floor ([member SnowDeformation.floor_layer]) instead of the
+## ground under the snow, so it skims the top of the snow as a snowball rolls on it, and is lifted onto it as it
+## starts. Off, it ploughs through on the ground, and its groove is as deep as the snow.
+@export var ride_snow_while_surfing: bool = true
+## Clumps the board throws up behind it per metre it surfs.
+@export_range(0.0, 100.0, 1.0) var spray_per_metre: float = 20.0
+
 ## Stamping can be turned off without removing the node, for a character that has just been teleported.
 @export var active: bool = true
 
@@ -112,6 +128,12 @@ var _hip_indices: PackedInt32Array = PackedInt32Array()
 var _last_ankle: Array[Vector3] = []
 var _kick_owed: Array[float] = []
 var _dt: float = 1.0 / 60.0
+## Whether the character was surfing last frame, whether this node gave it the floor layer to ride, where the board
+## was last frame (INF when it was not on the snow) and the spray it owes.
+var _surfing: bool = false
+var _gave_floor: bool = false
+var _last_board: Vector3 = Vector3.INF
+var _spray_owed: float = 0.0
 
 
 func _ready() -> void:
@@ -125,17 +147,88 @@ func _exit_tree() -> void:
 	var character: Node = get_parent()
 	if character != null and "terrain_speed_scale" in character:
 		character.set(&"terrain_speed_scale", 1.0) # Out of the snow's hands, back to normal going.
+	if _gave_floor and character is CollisionObject3D and _snow != null and is_instance_valid(_snow):
+		(character as CollisionObject3D).collision_mask &= ~_snow.floor_layer # nor still riding the snow it gave
+		_gave_floor = false
 
 
 func _physics_process(delta: float) -> void:
 	if not active or _snow == null or not is_instance_valid(_snow):
 		return
 	_dt = maxf(delta, 1e-4)
+	var surfing: bool = is_surfing()
+	if surfing != _surfing:
+		_set_surfing(surfing)
+	if surfing:
+		_press_board()
+		return
 	if not _bone_indices.is_empty():
 		_stamp_bones()
 		_stamp_legs()
 	else:
 		_stamp_markers()
+
+
+## True while the character is surfing: its [member surfing_property] is true.
+func is_surfing() -> bool:
+	var character: Node = get_parent()
+	return character != null and surfing_property != &"" and character.get(surfing_property) == true
+
+
+## Starts or stops surfing. Starting, the character is given the snow's floor layer to ride and lifted onto it if the
+## ground under the snow has it below the floor (by its own peer only; the others take its position as it is sent),
+## and walks at full speed; stopping takes the floor layer away again, only if this node gave it, so the character
+## sinks back to the ground under the snow.
+func _set_surfing(on: bool) -> void:
+	_surfing = on
+	_last_board = Vector3.INF
+	var character: Node = get_parent()
+	if on and character != null and "terrain_speed_scale" in character:
+		character.set(&"terrain_speed_scale", 1.0)
+	var body: CollisionObject3D = character as CollisionObject3D
+	if body == null or not ride_snow_while_surfing or _snow.floor_layer == 0:
+		return
+	if on and (body.collision_mask & _snow.floor_layer) == 0:
+		body.collision_mask |= _snow.floor_layer
+		_gave_floor = true
+		var at: Vector3 = body.global_position
+		var floor_top: float = _snow.get_floor_height(Vector2(at.x, at.z))
+		if body.is_multiplayer_authority() and _snow.floor_covers(Vector2(at.x, at.z)) and at.y < floor_top:
+			body.global_position = Vector3(at.x, floor_top, at.z)
+	elif not on and _gave_floor:
+		body.collision_mask &= ~_snow.floor_layer
+		_gave_floor = false
+
+
+## The board's groove: swept from where the board was last frame to where it is, [member board_size] wide and as deep
+## as the board sits in the snow plus [member board_groove], without digging the floor it rides. It throws snow up
+## behind it as it goes. Nothing while the character is in the air above the snow.
+func _press_board() -> void:
+	var body: Node3D = get_parent() as Node3D
+	if body == null:
+		return
+	var at: Vector3 = body.global_position
+	var top: float = _snow.get_undeformed_surface_height(Vector2(at.x, at.z))
+	if at.y > top + contact_margin:
+		_last_board = Vector3.INF
+		return
+	var from: Vector3 = _last_board if _last_board.is_finite() and _last_board.distance_to(at) < 2.0 else at
+	_last_board = at
+	var depth: float = clampf(top - at.y + board_groove, 0.0, _snow.snow_depth)
+	_snow.add_capsule(from, at, board_size.x * 0.5, depth, depth, rim_factor, 0.3, 0.4, false)
+	var moved: Vector3 = Vector3(at.x - from.x, 0.0, at.z - from.z)
+	if moved.is_zero_approx():
+		return
+	var along: Vector3 = moved.normalized()
+	# The board's own length, ahead of and behind where the character stands on it.
+	var yaw: float = atan2(-along.x, along.z)
+	_snow.add_footprint(at, yaw, board_size.x * 0.5, board_size.y * 0.5, depth, rim_factor, 0.3, 0.4, false)
+	_spray_owed += moved.length() * spray_per_metre
+	var burst: int = maxi(_snow.kick_burst, 1)
+	if _spray_owed >= float(burst):
+		_spray_owed -= float(burst)
+		var tail: Vector3 = at - along * board_size.y * 0.5
+		_snow.kick(Vector3(tail.x, top, tail.z), -moved / _dt * kick_speed_factor * 0.5, burst)
 
 
 ## The legs, as capsules clipped to the snow's surface: nothing above it, all of what is under it.

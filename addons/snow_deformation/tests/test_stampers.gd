@@ -280,3 +280,78 @@ func test_leaving_the_snow_gives_the_speed_back() -> void:
 
 #endregion
 
+
+
+#region Surfing
+
+## A character surfing on a shield, as far as the stamper can tell: a body with the flag it reads.
+class Surfer:
+	extends CharacterBody3D
+	var is_shield_surfing: bool = false
+	var terrain_speed_scale: float = 1.0
+
+
+## A surfer with a foot marker under it, standing in snow 0.4 deep.
+func _surfer() -> Node:
+	var body := Surfer.new()
+	add_child_autofree(body)
+	body.global_position = Vector3(0.0, 0.1, 0.0)
+	var foot := Marker3D.new()
+	foot.name = "Foot"
+	body.add_child(foot)
+	var stamper: Node = FOOT_STAMPER.new()
+	stamper.foot_bones = [] as Array[StringName]
+	stamper.foot_markers = [NodePath("../Foot")] as Array[NodePath]
+	stamper.sole_offset = 0.0
+	body.add_child(stamper)
+	return stamper
+
+
+func _slide(stamper: Node, frames: int) -> void:
+	var body: Node3D = stamper.get_parent()
+	for frame: int in frames:
+		body.global_position += Vector3(0.1, 0.0, 0.0) # 6 m/s
+		stamper.call("_physics_process", 1.0 / 60.0)
+
+
+func test_a_surfer_cuts_a_board_wide_groove_and_leaves_no_footprints() -> void:
+	var stamper: Node = _surfer()
+	stamper.get_parent().set("is_shield_surfing", true)
+	stamper.ride_snow_while_surfing = false
+	_slide(stamper, 10)
+	var feet: Array = _snow.footprints.filter(func(p: Dictionary) -> bool: return (p["half_width"] as float) < stamper.board_size.x * 0.5)
+	assert_eq(feet.size(), 0, "Surfing, the feet are on the board and leave no prints")
+	assert_gt(_snow.capsules.size(), 5, "the board sweeps a groove")
+	assert_almost_eq(_snow.capsules[-1]["radius"] as float, stamper.board_size.x * 0.5, 0.001, "as wide as the board")
+	assert_gt(_snow.kicks.size(), 0, "and throws snow up behind it")
+
+
+func test_the_feet_print_again_once_the_surfing_stops() -> void:
+	var stamper: Node = _surfer()
+	stamper.get_parent().set("is_shield_surfing", false)
+	_slide(stamper, 3)
+	assert_gt(_snow.footprints.size(), 0, "Off the board, a foot in the snow prints")
+
+
+func test_surfing_rides_the_snow_floor_and_gives_it_back() -> void:
+	var stamper: Node = _surfer()
+	var body: Surfer = stamper.get_parent()
+	body.collision_mask = 1
+	body.is_shield_surfing = true
+	stamper.call("_physics_process", 1.0 / 60.0)
+	assert_ne(body.collision_mask & _snow.floor_layer, 0, "Surfing, it rides the packed snow")
+	if _snow.floor_covers(Vector2.ZERO):
+		assert_gte(body.global_position.y, _snow.get_floor_height(Vector2.ZERO) - 0.001, "lifted onto it from the ground under the snow")
+	body.is_shield_surfing = false
+	stamper.call("_physics_process", 1.0 / 60.0)
+	assert_eq(body.collision_mask, 1, "and gives the layer back once it stops")
+
+
+func test_a_character_without_the_flag_never_surfs() -> void:
+	var body := Node3D.new()
+	add_child_autofree(body)
+	var stamper: Node = FOOT_STAMPER.new()
+	body.add_child(stamper)
+	assert_false(stamper.is_surfing(), "Nothing names it surfing, so it walks")
+
+#endregion

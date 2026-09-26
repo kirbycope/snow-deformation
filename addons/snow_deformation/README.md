@@ -43,6 +43,16 @@ so a planted foot re-stamping its own hole changes nothing, while a foot that sl
 mark for free. A character that runs fast enough for its feet to slide ploughs a trench, which is what
 a real one does in deep snow.
 
+**Surfing.** A character surfing down the snow on a shield or a board says so through a boolean property the stamper
+reads by name, `surfing_property` (`is_shield_surfing`, what the player controller's Player will call it), so the
+character needs nothing from this addon. While it is true the feet leave no prints: the board presses a groove
+instead, swept from where it was last frame, `board_size` (0.5 by 0.75 m) across and as deep as the board sits plus
+`board_groove`, without digging the floor, and throws snow up behind it (`spray_per_metre`). With
+`ride_snow_while_surfing` (on), the character gets the snow's `floor_layer` in its collision mask while it surfs and is
+lifted onto that floor as it starts, so it skims the top of the snow the way a snowball rolls on it; when it stops,
+the layer goes again and it sinks back to the ground under the snow. The stamper only gives the layer when the
+character did not already have it, and only lifts the character on its own peer.
+
 For feet to sink at all the character's collision has to rest on the ground **underneath** the snow.
 The snow surface mesh carries no collider, so that is what happens by default.
 
