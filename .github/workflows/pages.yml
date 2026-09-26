@@ -39,6 +39,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      # The demo's Player and weather come from other repositories and are git-ignored here; without
+      # them the export ships their nodes as empty placeholders.
+      - name: Fetch the addon dependencies
+        run: python3 tools/pull_addons.py
+
       - name: Install Godot and its export templates
         run: |
           set -euo pipefail
