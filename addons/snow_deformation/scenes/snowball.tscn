@@ -1,6 +1,7 @@
 [gd_scene format=3]
 
 [ext_resource type="Script" path="res://addons/snow_deformation/snowball.gd" id="1_snowball"]
+[ext_resource type="Material" path="res://addons/snow_deformation/resources/snowball_material.tres" id="2_snow"]
 
 [sub_resource type="PhysicsMaterial" id="PackedSnow"]
 friction = 1.0
@@ -10,13 +11,9 @@ rough = true
 resource_local_to_scene = true
 radius = 0.11
 
-[sub_resource type="StandardMaterial3D" id="SnowMaterial"]
-albedo_color = Color(0.93, 0.95, 0.98, 1)
-roughness = 0.85
-
 [sub_resource type="SphereMesh" id="BallMesh"]
 resource_local_to_scene = true
-material = SubResource("SnowMaterial")
+material = ExtResource("2_snow")
 radius = 0.11
 height = 0.22
 

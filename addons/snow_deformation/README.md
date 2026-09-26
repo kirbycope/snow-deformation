@@ -204,10 +204,13 @@ HTerrain's collider in the editor as it does in the game.
 
 ## Snowballs
 
-`scenes/snowball.tscn` is a `Snowball`, a `RigidBody3D` that starts the size of a football (22 cm across)
+`scenes/snowball.tscn` is a `Snowball`, a `RigidBody3D` that starts the size of a football (22 cm across), drawn
+with ambientCG's Snow 010 A mapped triplanar in its own space (`resources/snowball_material.tres`), so the grain
+rolls with it and stays the same size as it grows,
 and grows as it rolls over the snow. It picks up a layer `pick_up_depth` (1 cm) thick along its width, so it
 grows quickly while small and more slowly as it gets big: ten metres of rolling takes a football to a snowman's
-head, thirty to a ball a snowman can stand on. Its mass follows its volume at `density`, and the snow it picks up
+head, thirty to a ball a snowman can stand on. Held in the hands and pushed through the snow, its underside below the
+surface, it gathers snow the same way by the ground it covers, so a ball can be grown by carrying it low and walking. Its mass follows its volume at `density`, and the snow it picks up
 was standing still, so the growth itself holds a small ball back and lets a big one run: let go on a hillside of
 15 degrees or more, a football rolls away down it, gathering speed and snow: let go at the top of the v3 snow
 demo's 40 degree hill, into the blizzard, it runs at 3 to 4 m/s and is 48 cm across after 17 m. `rolling_resistance`
@@ -229,7 +232,7 @@ on friction: a snowman is stacked with nothing more than a pickup that can carry
 as the player controller's own pickup and hold. `max_radius` caps the growth.
 
 A stack holds only until something disturbs it. Anything but another snowball moving into a ball faster than
-`knock_speed` (0.5 m/s: a Player walking into it, a swung sword, a round) knocks it loose, as does another
+`knock_speed` (0.5 m/s: a Player walking into it, a swung sword) knocks it loose, as does another
 snowball thrown at it faster than `thrown_speed` (2 m/s, where one set down on it to stack is slower), and so does
 a ball in a stack that starts moving faster than `hold_speed`, which is what happens when the snow is
 ploughed out from under the bottom one and the floor it stands on drops (next section). Either frees the whole
@@ -239,7 +242,9 @@ wall), falls apart. Nothing dropped from the hands comes near that, at any size:
 set down, rolled or tossed stays whole. A ball knocked loose breaks from much less, `knocked_break_speed` (3 m/s),
 for `knocked_time` afterwards (`Snowball.breaks_at()`), so a snowman's head knocked off its base breaks where it
 lands. Being set moving, shoved or struck never breaks it, so a Player walking into a snowman knocks the head off
-without breaking the base. It falls apart
+without breaking the base. A round from a gun or an arrow does break it, at any size, held or not: a projectile
+that calls `register_projectile_hit(projectile, point, normal)` on what it hits, as the player controller's do, gets
+`Snowball.register_projectile_hit`, and the server asks a client holding the ball to break it. It falls apart
 (`Snowball.shatter()`, with a `shattered` signal): half its snow scatters as a handful of clumps, plain rigid
 bodies on no layer of their own that lie in the snow for `clump_life` seconds and melt away, and the rest goes
 up as a spray. A head knocked off a snowman breaks where it lands; one set down by hand does not. Only the

@@ -82,6 +82,7 @@ const AIR_DENSITY: float = 1.29 ## kg/m3, at sea level and freezing.
 const MAX_SINK: float = 0.25 ## The deepest a ball sinks, as a share of its radius.
 const SINK_RATE: float = 0.25 ## Metres per second a ball settles in, or comes back up once off the snow.
 const SKID_SPEED: float = 0.3 ## Metres per second its surface may slip over the snow before it is set rolling.
+const MAX_PUSH_STEP: float = 0.5 ## Metres a held ball can be pushed in one frame; further is a warp, not a push.
 
 ## How far the ball has sunk into the snow, in metres.
 var sink: float = 0.0
@@ -94,6 +95,8 @@ var _free_until: float = 0.0
 var _held_since: float = 0.0
 var _last_velocity: Vector3 = Vector3.ZERO
 var _was_frozen: bool = true
+## Where a frozen ball was on the last frame, to measure how far it is pushed through the snow; INF when free.
+var _pushed_from: Vector3 = Vector3.INF
 
 var _snow: SnowDeformation = null
 ## True while the ball is resting on the snow, which is the only time it picks any up.
@@ -216,8 +219,11 @@ func _physics_process(delta: float) -> void:
 	if lock_rotation and _now() - _held_since > 0.3 and linear_velocity.length() > hold_speed:
 		knock()
 	_hold_still()
-	# Only the authority grows it; the others take the radius from it. A held ball is frozen and grows nothing.
-	if _on_snow and not freeze and radius < max_radius and is_multiplayer_authority():
+	# Only the authority grows it; the others take the radius from it.
+	var pushed: float = _pushed_through_snow()
+	if pushed > 0.0 and radius < max_radius and is_multiplayer_authority():
+		radius = grown(radius, pushed, pick_up_depth)
+	elif _on_snow and not freeze and radius < max_radius and is_multiplayer_authority():
 		var before: float = mass
 		var reach: float = _collider_radius()
 		radius = grown(radius, rolled, pick_up_depth)
@@ -229,6 +235,22 @@ func _physics_process(delta: float) -> void:
 		# Up by as much as the collider grew, so it does not grow into the floor: the solver pushing it back out of
 		# the snow every frame bled away more speed than the snow picked up did.
 		global_position += Vector3.UP * maxf(_collider_radius() - reach, 0.0)
+
+
+## How far a frozen ball (one held in the hands) was moved through the snow since the last frame: over the ground, while
+## its underside is below the snow's surface. A held ball pushed through the snow gathers it as a rolled one does.
+## Nothing for a free ball, which grows by rolling, and nothing for a jump further than a push could take it.
+func _pushed_through_snow() -> float:
+	if not freeze or _snow == null or not is_instance_valid(_snow):
+		_pushed_from = Vector3.INF
+		return 0.0
+	var at: Vector3 = global_position
+	var from: Vector3 = _pushed_from
+	_pushed_from = at
+	if not from.is_finite() or at.y - radius >= _snow.get_undeformed_surface_height(Vector2(at.x, at.z)):
+		return 0.0
+	var step: float = Vector2(at.x - from.x, at.z - from.z).length()
+	return step if step < MAX_PUSH_STEP else 0.0
 
 
 func _integrate_forces(state: PhysicsDirectBodyState3D) -> void:
@@ -347,6 +369,26 @@ func _hold_still() -> void:
 	if hold:
 		_held_since = _now()
 		angular_velocity = Vector3.ZERO
+
+
+## A round from a gun or an arrow breaks it, whatever its size, held or not. A projectile that looks for a
+## [code]register_projectile_hit[/code] handler on what it hits calls this, the player controller's among them, on the
+## round's own authority (the server, for a spawned round). A ball held in a client's hands answers to that client, so
+## the server asks it.
+func register_projectile_hit(_projectile: Node3D, _point: Vector3, _normal: Vector3) -> void:
+	if is_queued_for_deletion():
+		return
+	if is_multiplayer_authority():
+		shatter.rpc()
+	elif multiplayer.is_server():
+		_shatter_for_server.rpc_id(get_multiplayer_authority())
+
+
+## The server's word that a round broke it, to the peer holding the ball.
+@rpc("any_peer", "reliable")
+func _shatter_for_server() -> void:
+	if multiplayer.get_remote_sender_id() == 1 and is_multiplayer_authority() and not is_queued_for_deletion():
+		shatter.rpc()
 
 
 ## Breaks it apart where it is, on every peer (the authority calls it as an RPC): clumps scatter from it and lie in the

@@ -373,3 +373,27 @@ func test_a_rolling_ball_leaves_its_track() -> void:
 	ball.linear_velocity = Vector3(2.0, 0.0, 0.0)
 	await wait_physics_frames(10)
 	assert_gt(_snow.stamps_total, before + 5, "Rolling on the snow it presses its track every step, sunk or not")
+
+
+func test_a_held_ball_pushed_through_the_snow_gathers_it() -> void:
+	await wait_physics_frames(2)
+	var low: Snowball = _ball()
+	var high: Snowball = _ball()
+	low.freeze = true # held in the hands
+	high.freeze = true
+	var surface: float = _snow.get_undeformed_surface_height(Vector2.ZERO)
+	for step: int in 120: # three metres, at a walk
+		low.global_position = Vector3(-1.5 + step * 0.025, surface - 0.05, 0.0)
+		high.global_position = Vector3(-1.5 + step * 0.025, surface + 0.5, 2.0)
+		await wait_physics_frames(1)
+	assert_gt(low.radius, 0.12, "Pushed along with its underside in the snow, it gathers snow")
+	assert_eq(high.radius, 0.11, "carried above it, none")
+
+
+func test_a_round_breaks_it_whatever_its_size() -> void:
+	var ball: Snowball = _ball()
+	ball.radius = 0.5
+	var broke: Array[bool] = []
+	ball.shattered.connect(broke.append.bind(true))
+	ball.register_projectile_hit(null, ball.global_position, Vector3.UP)
+	assert_eq(broke, [true], "Shot, even a snowman's base falls apart")
