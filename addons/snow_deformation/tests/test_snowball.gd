@@ -56,18 +56,18 @@ func test_rolling_grows_it_fast_while_small_and_slowly_when_big() -> void:
 	assert_eq(Snowball.grown(0.2, 0.0, 0.04), 0.2, "Standing still it gains nothing")
 
 
-func test_rolling_thirty_metres_makes_a_snowman_base() -> void:
+func test_rolling_ten_metres_makes_a_snowman_base() -> void:
 	var depth: float = _ball().pick_up_depth
 	var r: float = 0.11
 	for step: int in 1000:
 		r = Snowball.grown(r, 0.01, depth)
-	assert_between(r, 0.18, 0.25, "Ten metres from a football is a snowman's head")
+	assert_between(r, 0.28, 0.38, "Ten metres from a football is a ball a snowman can stand on")
 	for step: int in 2000:
 		r = Snowball.grown(r, 0.01, depth)
-	assert_between(r, 0.3, 0.4, "and thirty a ball it can stand on")
+	assert_gt(r, _ball().max_radius * 0.85, "and thirty is near the limit")
 
 
-func test_pushed_on_the_flat_it_stops_within_a_couple_of_metres() -> void:
+func test_pushed_on_the_flat_it_stops_within_a_few_metres() -> void:
 	await wait_physics_frames(2)
 	var ball: Snowball = _ball()
 	ball.global_position = Vector3(0.0, _snow.get_floor_height(Vector2.ZERO) + ball.radius + 0.01, 0.0)
@@ -75,7 +75,7 @@ func test_pushed_on_the_flat_it_stops_within_a_couple_of_metres() -> void:
 	ball.linear_velocity = Vector3(3.0, 0.0, 0.0) # a running Player's shove
 	var start: float = ball.global_position.x
 	await wait_seconds(4.0)
-	assert_between(ball.global_position.x - start, 0.5, 3.0, "Snow stops it in a couple of metres, not across the field")
+	assert_between(ball.global_position.x - start, 0.5, 3.5, "Snow stops it in a few metres, not across the field")
 
 
 func test_a_ball_moved_somewhere_else_does_not_grow() -> void:

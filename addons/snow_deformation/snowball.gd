@@ -46,13 +46,13 @@ extends RigidBody3D
 	set(value):
 		radius = clampf(value, 0.05, maxf(max_radius, 0.05))
 		_apply_radius()
-## Growth stops here.
+## Growth stops here, as a Zelda snowball's does: at the default, a ball as tall as a Player's chest (1.2 m across).
 @export_range(0.1, 2.0, 0.01, "suffix:m") var max_radius: float = 0.6
 ## How thick a layer of snow the ball picks up as it rolls over it.
-@export_range(0.0, 0.2, 0.001, "suffix:m") var pick_up_depth: float = 0.01
+@export_range(0.0, 0.2, 0.001, "suffix:m") var pick_up_depth: float = 0.03
 ## Snow's rolling resistance: the ball loses this times gravity in speed every second it rolls on snow, so a
-## push on the flat stops it within a couple of metres while a hill of 15 degrees or more rolls it away.
-@export_range(0.0, 1.0, 0.01) var rolling_resistance: float = 0.1
+## push on the flat stops it within a few metres while a hill of 12 degrees or more rolls it away.
+@export_range(0.0, 1.0, 0.01) var rolling_resistance: float = 0.15
 ## How fast anything but another snowball has to be moving into a ball to knock it loose from a stack.
 @export_range(0.0, 5.0, 0.05, "suffix:m/s") var knock_speed: float = 0.5
 ## Another snowball knocks it loose only when it comes in faster than this: thrown, not set down on it to stack.
@@ -224,14 +224,12 @@ func _physics_process(delta: float) -> void:
 	if pushed > 0.0 and radius < max_radius and is_multiplayer_authority():
 		radius = grown(radius, pushed, pick_up_depth)
 	elif _on_snow and not freeze and radius < max_radius and is_multiplayer_authority():
-		var before: float = mass
 		var reach: float = _collider_radius()
 		radius = grown(radius, rolled, pick_up_depth)
-		# The snow it picked up was standing still, so the ball carries the same momentum in more mass, and spins as a
-		# ball that size rolling at that speed does.
-		if mass > before:
-			linear_velocity *= before / mass
-			angular_velocity *= before / mass * reach / maxf(_collider_radius(), 0.001)
+		# It keeps its speed as it grows, as a Zelda snowball does, and spins as a ball that size rolling at that speed
+		# does. Carrying the same momentum in more mass, as the snow it picks up standing still would, held a ball on a
+		# hill to a jog while it grew.
+		angular_velocity *= reach / maxf(_collider_radius(), 0.001)
 		# Up by as much as the collider grew, so it does not grow into the floor: the solver pushing it back out of
 		# the snow every frame bled away more speed than the snow picked up did.
 		global_position += Vector3.UP * maxf(_collider_radius() - reach, 0.0)

@@ -207,14 +207,16 @@ HTerrain's collider in the editor as it does in the game.
 `scenes/snowball.tscn` is a `Snowball`, a `RigidBody3D` that starts the size of a football (22 cm across), drawn
 with ambientCG's Snow 010 A mapped triplanar in its own space (`resources/snowball_material.tres`), so the grain
 rolls with it and stays the same size as it grows,
-and grows as it rolls over the snow. It picks up a layer `pick_up_depth` (1 cm) thick along its width, so it
-grows quickly while small and more slowly as it gets big: ten metres of rolling takes a football to a snowman's
-head, thirty to a ball a snowman can stand on. Held in the hands and pushed through the snow, its underside below the
-surface, it gathers snow the same way by the ground it covers, so a ball can be grown by carrying it low and walking. Its mass follows its volume at `density`, and the snow it picks up
-was standing still, so the growth itself holds a small ball back and lets a big one run: let go on a hillside of
-15 degrees or more, a football rolls away down it, gathering speed and snow: let go at the top of the v3 snow
-demo's 40 degree hill, into the blizzard, it runs at 3 to 4 m/s and is 48 cm across after 17 m. `rolling_resistance`
-(0.1) stops one pushed on the flat within a couple of metres. Wherever it rolls on the snow it leaves its track, as
+and grows as it rolls over the snow, the way a Zelda snowball does. It picks up a layer `pick_up_depth` (3 cm)
+thick along its width, so it grows quickly while small and more slowly as it gets big: ten metres of rolling takes a
+football to a ball a snowman can stand on, and about thirty-five to `max_radius` (0.6 m, a ball as tall as a Player's
+chest), where it stops growing and rolls on. Held in the hands and pushed through the snow, its underside below the
+surface, it gathers snow the same way by the ground it covers, so a ball can be grown by carrying it low and walking.
+Its mass follows its volume at `density`, but it keeps its speed as it grows rather than sharing its momentum with
+the snow it picks up, which held a ball on a hill to a jog: let go at the top of the v3 snow demo's 40 degree hill,
+into the blizzard, a football is rolling at 5 m/s and a metre across by the bottom, 21 m down.
+`rolling_resistance` (0.15) stops one shoved on the flat within a few metres, while a hill of 12 degrees or more
+rolls it away. Wherever it rolls on the snow it leaves its track, as
 wide as it is and as deep as its underside plus the layer it picked up.
 
 On packed snow it rolls along the floor without skidding, uphill, downhill or across. The floor's friction keeps it
