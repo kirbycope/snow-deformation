@@ -2,8 +2,8 @@ extends GutTest
 ## Unit tests for the snow_deformation addon.
 ##
 ## These run headless, where [method RenderingServer.get_rendering_device] returns null, so the manager
-## disables its compute passes. That is deliberate: it is the same path a project on the Compatibility
-## renderer takes, and it has to stay working. Everything tested below is the CPU half, which runs
+## disables its compute passes; headless draws nothing either, so it takes no Compatibility fallback, and the
+## node has to keep working that way. Everything tested below is the CPU half, which runs
 ## either way: stamp packing, the window's snapping and scrolling arithmetic, the height providers, and
 ## the FootStamper's decisions about when and how deep to cut.
 
@@ -37,6 +37,74 @@ func test_stamping_while_disabled_is_counted_but_costs_nothing() -> void:
 	_snow.add_footprint(Vector3.ZERO, 0.0, 0.06, 0.14, 0.3)
 	assert_eq(_snow.stamps_this_frame, 1, "The stamp is counted, so a readout still shows the load")
 	assert_eq(_snow.get("_stamps").size(), 0, "but nothing is packed for a GPU that is not there")
+
+
+func test_headless_does_not_take_the_compatibility_fallback() -> void:
+	assert_false(_snow.fallback, "Headless draws nothing, so there is no fragment pass to fall back to either")
+	assert_false(SnowDeformation._fallback_wanted(), "and the check says so")
+
+#endregion
+
+
+#region Compatibility fallback
+# Headless draws nothing, so these drive the fallback's plumbing by hand: which viewport draws, what it is told and
+# which texture is on show. That the pass itself carves the same snow as compute is checked in a window, under
+# --rendering-method gl_compatibility (see the README).
+
+func _start_fallback() -> void:
+	_snow.enabled = true
+	_snow.fallback = true
+	_snow.call(&"_init_fallback")
+
+
+func _pass_of(index: int) -> ShaderMaterial:
+	return _snow.call(&"_pass_material", (_snow.get("_window_pair") as Array)[index]) as ShaderMaterial
+
+
+func test_the_fallback_builds_two_half_float_viewports_that_read_each_other() -> void:
+	_start_fallback()
+	var pair: Array = _snow.get("_window_pair")
+	assert_eq(pair.size(), 2, "Two viewports for the window")
+	for i: int in 2:
+		var viewport: SubViewport = pair[i]
+		assert_eq(viewport.size, Vector2i(1024, 1024), "each a texel per texel")
+		assert_true(viewport.use_hdr_2d, "in half floats, so depths in metres survive")
+		assert_eq(_pass_of(i).get_shader_parameter(&"previous"), (pair[1 - i] as SubViewport).get_texture(), "each reading the other")
+	assert_eq(_snow.get_deform_texture(), (pair[0] as SubViewport).get_texture(), "The first is on show")
+
+
+func test_a_stamp_draws_the_other_viewport_and_puts_it_on_show() -> void:
+	_start_fallback()
+	_snow.call(&"_fallback_frame", 0.0, false) # The wipe queued at start-up.
+	var front: int = _snow.get("_front")
+	var pair: Array = _snow.get("_window_pair")
+	_snow.add_footprint(Vector3(1.0, 0.4, 2.0), 0.0, 0.06, 0.14, 0.3)
+	_snow.call(&"_fallback_frame", 0.0, false)
+	var drawn: int = 1 - front
+	assert_eq(_snow.get("_front"), drawn, "The viewport that was not on show drew")
+	assert_eq((pair[drawn] as SubViewport).render_target_update_mode, SubViewport.UPDATE_ONCE, "once, this frame")
+	assert_eq(_pass_of(drawn).get_shader_parameter(&"stamp_count"), 1, "with the one stamp")
+	assert_eq(_snow.get_deform_texture(), (pair[drawn] as SubViewport).get_texture(), "and it is the texture on show now")
+	var image: Image = _snow.get("_stamp_image")
+	var a: Color = image.get_pixel(0, 0)
+	assert_almost_eq(Vector3(a.r, a.g, a.b), Vector3(1.0, 0.4, 2.0), Vector3.ONE * F32, "The stamp's first vec4 is its point")
+
+
+func test_nothing_to_do_draws_nothing() -> void:
+	_start_fallback()
+	_snow.call(&"_fallback_frame", 0.0, false)
+	var front: int = _snow.get("_front")
+	_snow.call(&"_fallback_frame", 0.0, false)
+	assert_eq(_snow.get("_front"), front, "No stamps, no refill and no scroll: the same texture stays on show")
+
+
+func test_clear_wipes_on_the_next_pass() -> void:
+	_start_fallback()
+	_snow.call(&"_fallback_frame", 0.0, false)
+	_snow.clear()
+	_snow.call(&"_fallback_frame", 0.0, false)
+	var drawn: ShaderMaterial = _pass_of(_snow.get("_front"))
+	assert_eq(drawn.get_shader_parameter(&"shift"), Vector2i(1024, 1024), "A whole window's shift reads nothing back: untouched snow")
 
 #endregion
 

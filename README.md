@@ -23,5 +23,5 @@ commits in `tools/addons.lock.json`, and CI runs the same pull before the tests 
 Clone it, run the pull, open `project.godot` in Godot, and press play. The addon is mounted at
 `res://addons/snow_deformation/` exactly as it is in a game, so it is edited in place.
 
-The web demo needs a RenderingDevice for the compute passes, which the browser's Compatibility
-renderer does not have, so there the snow stays flat and the readout says so.
+The web demo runs on the browser's Compatibility renderer, which has no compute, so the snow there is
+carved by the addon's fragment fallback rather than the compute passes; the readout says which is running.

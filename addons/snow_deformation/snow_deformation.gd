@@ -14,8 +14,10 @@ extends Node3D
 ##
 ## The channels are R = depression in metres, G = berm height in metres, B = disturbed mask 0-1.
 ##
-## Needs the Forward+ or Mobile renderer. Under Compatibility, or headless, there is no
-## [RenderingDevice]: the node warns once, disables itself, and the snow renders flat.
+## Forward+ and Mobile run the two compute passes. Compatibility (the web build) has no [RenderingDevice], so it
+## draws the same maths as a fragment pass instead, into two [SubViewport]s that take turns: each frame the one not
+## on show reads the other, scrolls, refills and stamps, and becomes the texture on show. Headless has neither: the
+## node warns once, disables itself, and the snow renders flat.
 
 ## Every manager joins this group, so a stamper can find one without a [NodePath] to it.
 const GROUP: StringName = &"snow_deformation"
@@ -35,6 +37,7 @@ const _SCROLL_SHADER: String = "res://addons/snow_deformation/shaders/snow_scrol
 const _UPDATE_SHADER: String = "res://addons/snow_deformation/shaders/snow_update.glsl"
 const _SURFACE_SHADER: String = "res://addons/snow_deformation/shaders/snow_surface.gdshader"
 const _OVERLAY_SHADER: String = "res://addons/snow_deformation/shaders/snow_debug_overlay.gdshader"
+const _FALLBACK_SHADER: String = "res://addons/snow_deformation/shaders/snow_update_fallback.gdshader"
 
 ## Matches `local_size_x/y` in both compute shaders.
 const _GROUP_SIZE: int = 8
@@ -215,8 +218,10 @@ const _BAKE_BUDGET_USEC: int = 2000
 ## Show the deformation texture in the corner of the screen.
 @export var debug_overlay: bool = false
 
-## True when the compute passes are running. False under Compatibility or headless.
+## True when the snow deforms: the compute passes, or under Compatibility the fragment fallback. False headless.
 var enabled: bool = false
+## True when the deformation runs as the Compatibility renderer's fragment fallback rather than compute.
+var fallback: bool = false
 ## Stamps handed in since the last upload, before the per-frame cap.
 var stamps_this_frame: int = 0
 ## What [member stamps_this_frame] was for the frame just uploaded. The live counter is reset as soon
@@ -291,6 +296,17 @@ var _pending_shift: Vector2i = Vector2i.ZERO
 var _scroll_file: RDShaderFile = null
 var _update_file: RDShaderFile = null
 
+# The Compatibility fallback: two SubViewports a side for the window, and two for the map when there is one, of which
+# the one at index [code]_front[/code] holds the snow as it is. [code]_stamp_texture[/code] carries a frame's stamps.
+var _window_pair: Array[SubViewport] = []
+var _map_pair: Array[SubViewport] = []
+var _front: int = 0
+var _map_front: int = 0
+var _stamp_image: Image = null
+var _stamp_texture: ImageTexture = null
+## Set by [method clear]: the next pass starts from untouched snow instead of reading the last.
+var _wipe_pending: bool = false
+
 # Render-thread state. Nothing here is touched from the main thread once _init_compute has run.
 var _rd: RenderingDevice = null
 var _display: RID = RID()
@@ -333,6 +349,12 @@ func _ready() -> void:
 	_publish_globals()
 
 	var device: RenderingDevice = RenderingServer.get_rendering_device()
+	if device == null and _fallback_wanted():
+		enabled = true
+		fallback = true
+		_init_fallback()
+		_build_overlay()
+		return
 	if device == null:
 		push_warning("SnowDeformation: no RenderingDevice (Compatibility renderer or headless), so snow deformation is off and the snow renders flat.")
 		return
@@ -382,6 +404,10 @@ func _process(delta: float) -> void:
 		if _overlay.size != _OVERLAY_SIZE:
 			_overlay.size = _OVERLAY_SIZE
 
+	if fallback:
+		_fallback_frame(decay_dt, scrolled)
+		_end_frame()
+		return
 	if not enabled or not _compute_ready:
 		_end_frame()
 		return
@@ -755,13 +781,16 @@ func clear() -> void:
 		_lay_floor(_floor_base.duplicate())
 	_stamps.clear()
 	stamps_this_frame = 0
+	if fallback:
+		_wipe_pending = true
 	if _compute_ready:
 		RenderingServer.call_on_render_thread(_render_clear)
 
 
-## The deformation texture, for a material that wants it directly rather than through the globals.
-func get_deform_texture() -> Texture2DRD:
-	return _texture
+## The deformation texture, for a material that wants it directly rather than through the globals. Under the
+## Compatibility fallback it is whichever of the two viewports is on show, so take it again each frame.
+func get_deform_texture() -> Texture2D:
+	return _window_pair[_front].get_texture() if fallback else _texture
 
 
 ## The nearest manager to [param from], or null. Looks up the tree first, so a level with more than one
@@ -1573,7 +1602,7 @@ func _build_overlay() -> void:
 	layer.layer = 128
 	_overlay = TextureRect.new()
 	_overlay.name = "DeformTexture"
-	_overlay.texture = _texture
+	_overlay.texture = get_deform_texture()
 	_overlay.custom_minimum_size = _OVERLAY_SIZE
 	_overlay.size = _OVERLAY_SIZE
 	_overlay.position = Vector2(16.0, 16.0)
@@ -1589,6 +1618,121 @@ func _build_overlay() -> void:
 	_overlay.visible = debug_overlay
 	layer.add_child(_overlay)
 	add_child(layer)
+
+#endregion
+
+
+#region Compatibility fallback
+# One pass a frame at most. Two in one frame would each read the other's viewport, and the order Godot draws two
+# sibling viewports in is not something to rely on; a SubViewport does draw before the scene sampling it, which is
+# what lets the texture on show change every frame without the tracks flickering.
+
+## Compatibility, with a display to draw on. Headless has no renderer at all, so there is nothing to fall back to.
+static func _fallback_wanted() -> bool:
+	return RenderingServer.get_current_rendering_method() == "gl_compatibility" and DisplayServer.get_name() != "headless"
+
+
+func _init_fallback() -> void:
+	_stamp_image = Image.create_empty(4, max_stamps_per_frame, false, Image.FORMAT_RGBAF)
+	_stamp_texture = ImageTexture.create_from_image(_stamp_image)
+	_window_pair = [_pass_viewport(resolution), _pass_viewport(resolution)]
+	if has_map():
+		_map_pair = [_pass_viewport(map_resolution), _pass_viewport(map_resolution)]
+	# Each reads the other.
+	for pair: Array[SubViewport] in [_window_pair, _map_pair]:
+		for i: int in pair.size():
+			_pass_material(pair[i]).set_shader_parameter(&"previous", pair[1 - i].get_texture())
+	# The first texture on show must be untouched snow rather than whatever the render target held, so the front of
+	# each pair draws once now; the first real pass wipes too, so it does not matter which of the two draws first.
+	for pair: Array[SubViewport] in [_window_pair, _map_pair]:
+		if not pair.is_empty():
+			_set_pass(pair[0], 0, 0.0, Vector2i(pair[0].size.x, pair[0].size.y), Vector2.ZERO, 1.0, 0.0)
+			pair[0].render_target_update_mode = SubViewport.UPDATE_ONCE
+	_front = 0
+	_map_front = 0
+	_wipe_pending = true
+	_publish_fallback()
+
+
+## A square [SubViewport] of [param side] texels holding the snow in half floats, with a [ColorRect] over all of it
+## drawing the pass.
+func _pass_viewport(side: int) -> SubViewport:
+	var viewport: SubViewport = SubViewport.new()
+	viewport.size = Vector2i(side, side)
+	viewport.disable_3d = true
+	viewport.transparent_bg = true
+	viewport.use_hdr_2d = true
+	viewport.render_target_clear_mode = SubViewport.CLEAR_MODE_NEVER
+	viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
+	var rect: ColorRect = ColorRect.new()
+	rect.size = Vector2(side, side)
+	var material: ShaderMaterial = ShaderMaterial.new()
+	material.shader = load(_FALLBACK_SHADER) as Shader
+	material.set_shader_parameter(&"stamps", _stamp_texture)
+	material.set_shader_parameter(&"resolution", float(side))
+	rect.material = material
+	viewport.add_child(rect)
+	add_child(viewport, false, INTERNAL_MODE_BACK)
+	return viewport
+
+
+func _pass_material(viewport: SubViewport) -> ShaderMaterial:
+	return (viewport.get_child(0) as ColorRect).material as ShaderMaterial
+
+
+func _set_pass(viewport: SubViewport, count: int, delta: float, shift: Vector2i, origin: Vector2, texel: float, min_radius: float) -> void:
+	var material: ShaderMaterial = _pass_material(viewport)
+	material.set_shader_parameter(&"stamp_count", count)
+	material.set_shader_parameter(&"shift", shift)
+	material.set_shader_parameter(&"deform_origin", origin)
+	material.set_shader_parameter(&"texel_size", texel)
+	material.set_shader_parameter(&"delta_time", delta)
+	material.set_shader_parameter(&"snow_depth", snow_depth)
+	material.set_shader_parameter(&"refill_rate_geo", refill_rate_geo)
+	material.set_shader_parameter(&"refill_rate_mask", refill_rate_mask)
+	material.set_shader_parameter(&"max_rim_height", max_rim_height)
+	material.set_shader_parameter(&"noise_scale", noise_scale)
+	material.set_shader_parameter(&"noise_strength", noise_strength)
+	material.set_shader_parameter(&"min_radius", min_radius)
+
+
+## This frame's pass, when there is anything to do: the stamps go up as a texture, the viewport not on show draws
+## from the one that is, and then it is the one on show.
+func _fallback_frame(decay_dt: float, scrolled: bool) -> void:
+	var count: int = _stamps.size() / STAMP_FLOATS
+	if count == 0 and decay_dt <= 0.0 and not scrolled and not _wipe_pending:
+		return
+	if count > 0:
+		var data: PackedFloat32Array = _stamps.duplicate()
+		data.resize(max_stamps_per_frame * STAMP_FLOATS)
+		_stamp_image.set_data(4, max_stamps_per_frame, false, Image.FORMAT_RGBAF, data.to_byte_array())
+		_stamp_texture.update(_stamp_image)
+	var shift: Vector2i = Vector2i(resolution, resolution) if _wipe_pending else _pending_shift
+	_pending_shift = Vector2i.ZERO
+	_front = 1 - _front
+	_set_pass(_window_pair[_front], count, decay_dt, shift, _origin, _texel_size, 0.0)
+	_window_pair[_front].render_target_update_mode = SubViewport.UPDATE_ONCE
+	var region: Rect2i = _map_region(count, decay_dt)
+	if not _map_pair.is_empty() and (region.has_area() or _wipe_pending):
+		var texel: float = map_texel()
+		_map_front = 1 - _map_front
+		# The map never scrolls; a shift of the whole map is how a pass wipes it.
+		var map_shift: Vector2i = Vector2i(map_resolution, map_resolution) if _wipe_pending else Vector2i.ZERO
+		_set_pass(_map_pair[_map_front], count, decay_dt, map_shift, map_rect.position, texel, texel * 0.75)
+		_map_pair[_map_front].render_target_update_mode = SubViewport.UPDATE_ONCE
+	_wipe_pending = false
+	_publish_fallback()
+
+
+## Points everything that samples the snow at the viewports now on show. Main thread, the same frame they draw.
+func _publish_fallback() -> void:
+	var texture: Texture2D = _window_pair[_front].get_texture()
+	RenderingServer.global_shader_parameter_set(&"snow_deform_tex", texture)
+	if _overlay != null:
+		_overlay.texture = texture
+	if _surface_material != null and not _map_pair.is_empty():
+		_surface_material.set_shader_parameter(&"map_deform_tex", _map_pair[_map_front].get_texture())
+		_surface_material.set_shader_parameter(&"use_map_tracks", true)
 
 #endregion
 

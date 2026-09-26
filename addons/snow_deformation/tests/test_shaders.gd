@@ -8,6 +8,7 @@ const SCROLL: String = "res://addons/snow_deformation/shaders/snow_scroll.glsl"
 const UPDATE: String = "res://addons/snow_deformation/shaders/snow_update.glsl"
 const SURFACE: String = "res://addons/snow_deformation/shaders/snow_surface.gdshader"
 const OVERLAY: String = "res://addons/snow_deformation/shaders/snow_debug_overlay.gdshader"
+const FALLBACK: String = "res://addons/snow_deformation/shaders/snow_update_fallback.gdshader"
 
 ## Every global the surface shader reads. A project missing one of these fails to compile the shader,
 ## which is why they live in project.godot rather than being registered at run time by the manager.
@@ -44,6 +45,12 @@ func test_the_surface_shader_loads() -> void:
 func test_the_debug_overlay_shader_loads() -> void:
 	var shader: Shader = load(OVERLAY) as Shader
 	assert_not_null(shader, "The overlay shader loads")
+	assert_eq(shader.get_mode(), Shader.MODE_CANVAS_ITEM, "and draws on a canvas item")
+
+
+func test_the_compatibility_fallback_shader_loads() -> void:
+	var shader: Shader = load(FALLBACK) as Shader
+	assert_not_null(shader, "The Compatibility renderer's update pass loads")
 	assert_eq(shader.get_mode(), Shader.MODE_CANVAS_ITEM, "and draws on a canvas item")
 
 

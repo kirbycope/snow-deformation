@@ -67,7 +67,9 @@ func _apply_refill() -> void:
 func _update_readout() -> void:
 	if readout == null or snow == null:
 		return
-	var status: String = "compute passes running" if snow.enabled else "DISABLED: no RenderingDevice, snow is flat"
+	var status: String = "DISABLED: no renderer, snow is flat"
+	if snow.enabled:
+		status = "Compatibility fragment passes running" if snow.fallback else "compute passes running"
 	readout.text = "\n".join([
 		"Snow deformation: %s" % status,
 		"%d x %d texels over %.0f m  (%.1f cm per texel)" % [snow.resolution, snow.resolution, snow.world_size, snow.world_size / float(snow.resolution) * 100.0],

@@ -1,6 +1,6 @@
 # Snow Deformation
 
-Real-time deformable snow for Godot 4.8+ on the Forward+ renderer. Deep footprints with steep walls
+Real-time deformable snow for Godot 4.8+, on Forward+ and Mobile and, through a fallback, on Compatibility and the web. Deep footprints with steep walls
 and a crumbly raised rim, troughs ploughed by anything rolling through it, and snow that
 is visibly a different material inside a track than it is outside one.
 
@@ -370,9 +370,19 @@ objects.
 
 ## Notes worth knowing
 
-**No RenderingDevice, no deformation.** Under the Compatibility renderer, and in a headless run, there
-is none. The node warns once, disables its compute passes, and the snow renders flat and undeformed.
-That path is what every headless test exercises, so it stays working.
+**Compatibility and the web take a fragment fallback.** Forward+ and Mobile carve the snow with the two
+compute passes. The Compatibility renderer, which is the only one a web export has, has no RenderingDevice
+and so no compute, and there the node draws the same maths as a fragment pass instead
+(`shaders/snow_update_fallback.gdshader`): two half-float `SubViewport`s take turns, the one not on show
+reading the other and scrolling, refilling and stamping it in one pass, then going on show in its place. The
+stamps reach it as a small float texture, four texels a stamp. It runs only when there is something to do,
+like the compute passes, and `fallback` says it is the path in use. Read back after the same stamps, it holds
+the same values as the compute path to the last digit. To see it on the desktop, run with
+`--rendering-method gl_compatibility`.
+
+**Headless, no deformation.** A headless run has no renderer at all: the node warns once, disables itself,
+and the snow renders flat and undeformed. That path is what every headless test exercises, so it stays
+working; the fallback's plumbing is tested by driving it by hand.
 
 **Refill is saved up rather than applied every frame.** An `RGBA16F` half float resolves about
 0.00024 near 0.35. At 120 fps a refill of 0.02 m/s wants to subtract 0.00017 per frame, which is finer
