@@ -1169,6 +1169,7 @@ func _build_floor() -> void:
 	_floor.name = "SnowFloor"
 	_floor.collision_layer = floor_layer
 	_floor.collision_mask = 0
+	_floor.add_to_group(&"SNOW") # the surface group footsteps and a shield surf go by
 	var packed: PhysicsMaterial = PhysicsMaterial.new()
 	packed.friction = 1.0
 	_floor.physics_material_override = packed

@@ -355,3 +355,40 @@ func test_a_character_without_the_flag_never_surfs() -> void:
 	assert_false(stamper.is_surfing(), "Nothing names it surfing, so it walks")
 
 #endregion
+
+
+#region Steps handed to the character
+
+## A character that plays its own steps, as the player controller's Player does.
+class Stepper:
+	extends CharacterBody3D
+	var footstep_override: AudioStream = null
+
+
+func _stepper(height: float) -> Node:
+	var body := Stepper.new()
+	add_child_autofree(body)
+	body.global_position = Vector3(0.0, height, 0.0)
+	var stamper: Node = FOOT_STAMPER.new()
+	stamper.foot_bones = [] as Array[StringName]
+	stamper.footstep_sound = AudioStreamWAV.new()
+	body.add_child(stamper)
+	return stamper
+
+
+func test_a_character_in_snow_is_lent_the_crunch() -> void:
+	var stamper: Node = _stepper(0.1)
+	stamper.call("_physics_process", 1.0 / 60.0)
+	assert_eq(stamper.get_parent().get("footstep_override"), stamper.footstep_sound, "Standing in snow, its steps crunch")
+	stamper.get_parent().global_position.y = 3.0
+	stamper.call("_physics_process", 1.0 / 60.0)
+	assert_null(stamper.get_parent().get("footstep_override"), "and out of it, they are its own again")
+
+
+func test_the_stamper_stays_quiet_for_a_character_that_steps_for_itself() -> void:
+	var stamper: Node = _stepper(0.1)
+	stamper.call("_play_step", 0, Vector3.ZERO)
+	var voices: Array = stamper.get("_voices")
+	assert_true(voices.is_empty(), "No crunch of its own, so it never sounds on top of the character's step")
+
+#endregion

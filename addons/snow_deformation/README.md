@@ -43,6 +43,13 @@ so a planted foot re-stamping its own hole changes nothing, while a foot that sl
 mark for free. A character that runs fast enough for its feet to slide ploughs a trench, which is what
 a real one does in deep snow.
 
+**Steps.** A character that plays its own footsteps says so with a `footstep_override` property (the player controller's
+Player has one). While it stands in snow deep enough to be heard, the stamper sets its `footstep_sound` there, so the
+character's own steps crunch instead of sounding the ground under the snow, and it plays no crunch of its own for
+that character: one step, never two. Out of the snow, or on a board, it hands the steps back (null). A character
+without the property gets the stamper's own crunch as before. The snow's packed floor is in the `SNOW` group, the
+surface group footsteps and a shield surf's friction go by.
+
 **Surfing.** A character surfing down the snow on a shield or a board says so through a boolean property the stamper
 reads by name, `surfing_property` (`is_shield_surfing`, what the player controller's Player will call it), so the
 character needs nothing from this addon. While it is true the feet leave no prints: the board presses a groove

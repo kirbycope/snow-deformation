@@ -85,7 +85,9 @@ extends Node
 
 @export_group("Sound")
 ## Played when a foot comes down into the snow. An [AudioStreamRandomizer] holding several crunches is
-## what stops it repeating. Left empty the stamper is silent, so the addon ships no audio of its own.
+## what stops it repeating. Left empty the stamper is silent, so the addon ships no audio of its own. A character with
+## a [code]footstep_override[/code] property (the player controller's Player) plays it instead, from its own steps,
+## while it stands in snow, so its own footsteps and this crunch never sound together; the stamper then plays none.
 @export var footstep_sound: AudioStream = null
 @export_range(-40.0, 12.0, 0.5, "suffix:dB") var footstep_volume_db: float = -4.0
 @export_range(1.0, 60.0, 1.0, "suffix:m") var footstep_max_distance: float = 22.0
@@ -156,6 +158,7 @@ func _physics_process(delta: float) -> void:
 	if not active or _snow == null or not is_instance_valid(_snow):
 		return
 	_dt = maxf(delta, 1e-4)
+	_lend_steps()
 	var surfing: bool = is_surfing()
 	if surfing != _surfing:
 		_set_surfing(surfing)
@@ -167,6 +170,20 @@ func _physics_process(delta: float) -> void:
 		_stamp_legs()
 	else:
 		_stamp_markers()
+
+
+## Hands the crunch to a character that plays its own steps ([code]footstep_override[/code]) while it stands in snow
+## deep enough to be heard, and takes it back once it is out, on a board, or the snow is too thin.
+func _lend_steps() -> void:
+	var character: Node3D = get_parent() as Node3D
+	if character == null or not "footstep_override" in character:
+		return
+	var at: Vector3 = character.global_position
+	var top: float = _snow.get_undeformed_surface_height(Vector2(at.x, at.z))
+	var in_snow: bool = footstep_sound != null and _snow.snow_depth >= footstep_min_depth and at.y <= top + contact_margin 			and not is_surfing()
+	var stream: AudioStream = footstep_sound if in_snow else null
+	if character.get("footstep_override") != stream:
+		character.set("footstep_override", stream)
 
 
 ## True while the character is surfing: its [member surfing_property] is true.
@@ -358,8 +375,8 @@ func _set_down(foot: int, down: bool) -> bool:
 
 ## The crunch, at the foot rather than at the character, so a step is heard where it was taken.
 func _play_step(foot: int, at: Vector3) -> void:
-	if footstep_sound == null:
-		return
+	if footstep_sound == null or "footstep_override" in get_parent():
+		return # a character that plays its own steps has the crunch already
 	while _voices.size() <= foot:
 		var voice: AudioStreamPlayer3D = AudioStreamPlayer3D.new()
 		voice.name = "StepVoice%d" % _voices.size()
