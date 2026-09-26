@@ -227,12 +227,12 @@ snowball thrown at it faster than `thrown_speed` (2 m/s, where one set down on i
 a ball in a stack that starts moving faster than `hold_speed`, which is what happens when the snow is
 ploughed out from under the bottom one and the floor it stands on drops (next section). Either frees the whole
 stack to roll for `knocked_time` (`Snowball.knock()`), so it topples the way it would. A ball stopped short, its
-speed falling in one physics step by more than it can take (a landing, a wall, a thrown ball reaching what it was
-thrown at), falls apart. What it can take is `break_speed` (6 m/s) for a football and less as it gets bigger,
-inversely as the radius (`Snowball.breaks_at`), since a big ball is looser snow: a football let go of from the
-hands, or even from two metres, stays whole; a snowman's head (40 cm across) knocked off its base does not. Being
-set moving, shoved or struck never breaks it, so a Player walking into a snowman knocks the head off without
-breaking the base. It falls apart
+speed falling in one physics step by `break_speed` (8 m/s, a fall of more than three metres, or a hard throw at a
+wall), falls apart. Nothing dropped from the hands comes near that, at any size: a ball picked up and let go of,
+set down, rolled or tossed stays whole. A ball knocked loose breaks from much less, `knocked_break_speed` (3 m/s),
+for `knocked_time` afterwards (`Snowball.breaks_at()`), so a snowman's head knocked off its base breaks where it
+lands. Being set moving, shoved or struck never breaks it, so a Player walking into a snowman knocks the head off
+without breaking the base. It falls apart
 (`Snowball.shatter()`, with a `shattered` signal): half its snow scatters as a handful of clumps, plain rigid
 bodies on no layer of their own that lie in the snow for `clump_life` seconds and melt away, and the rest goes
 up as a spray. A head knocked off a snowman breaks where it lands; one set down by hand does not. Only the

@@ -260,12 +260,12 @@ func test_a_hard_landing_breaks_it_into_clumps_and_a_gentle_one_does_not() -> vo
 	gentle.global_position = Vector3(-3.0, top + gentle.radius + 0.03, 0.0)
 	var dropped: Snowball = _ball()
 	dropped.radius = 0.2
-	dropped.global_position = Vector3(3.0, top + 2.5, 0.0)
+	dropped.global_position = Vector3(3.0, top + 5.0, 0.0)
 	var broke: Array[bool] = []
 	dropped.shattered.connect(broke.append.bind(true))
-	await wait_seconds(1.5)
+	await wait_seconds(1.8)
 	assert_true(is_instance_valid(gentle), "Set down gently it stays whole")
-	assert_eq(broke, [true], "Dropped two metres it falls apart")
+	assert_eq(broke, [true], "Dropped five metres it falls apart")
 	assert_false(is_instance_valid(dropped), "and is gone")
 	var clumps: int = 0
 	for child: Node in get_children():
@@ -315,18 +315,23 @@ func test_a_ball_on_a_hill_rolls_away_down_it_and_grows() -> void:
 	assert_gt(ball.radius, 0.15, "and snow")
 
 
-func test_the_bigger_the_ball_the_less_it_takes_to_break() -> void:
-	assert_eq(Snowball.breaks_at(6.0, 0.11), 6.0, "A football breaks at break_speed")
-	assert_almost_eq(Snowball.breaks_at(6.0, 0.22), 3.0, 0.001, "one twice the size at half that")
-	var held_drop: float = sqrt(2.0 * 9.8 * 1.3) # let go of from the hands
-	assert_lt(held_drop, Snowball.breaks_at(6.0, 0.11), "A football let go of from the hands survives the landing")
-	var head_fall: float = sqrt(2.0 * 9.8 * 0.8) # knocked off a snowman's base
-	assert_gt(head_fall, Snowball.breaks_at(6.0, 0.2), "a snowman's head knocked off its base does not")
-
-
-func test_a_football_dropped_from_the_hands_stays_whole() -> void:
-	await wait_physics_frames(2)
+func test_a_knocked_ball_breaks_from_less_than_one_let_go_of() -> void:
 	var ball: Snowball = _ball()
-	ball.global_position = Vector3(2.0, _snow.get_floor_height(Vector2(2.0, 0.0)) + 1.3, 0.0)
-	await wait_seconds(1.5)
-	assert_true(is_instance_valid(ball), "Dropped from holding height it stays whole")
+	var held_drop: float = sqrt(2.0 * 9.8 * 1.6) # let go of from the hands, high
+	assert_lt(held_drop, ball.breaks_at(), "A ball let go of from the hands survives the landing")
+	ball.knock()
+	var head_fall: float = sqrt(2.0 * 9.8 * 0.8) # knocked off a snowman's base
+	assert_gt(head_fall, ball.breaks_at(), "a snowman's head knocked off its base does not")
+
+
+func test_any_ball_dropped_from_the_hands_stays_whole() -> void:
+	await wait_physics_frames(2)
+	var balls: Array[Snowball] = []
+	for i: int in 3:
+		var ball: Snowball = _ball()
+		ball.radius = [0.11, 0.3, 0.5][i]
+		ball.global_position = Vector3(-4.0 + i * 3.0, _snow.get_floor_height(Vector2(-4.0 + i * 3.0, 0.0)) + ball.radius + 1.5, 0.0)
+		balls.append(ball)
+	await wait_seconds(2.0)
+	for ball: Snowball in balls:
+		assert_true(is_instance_valid(ball), "Dropped a metre and a half it stays whole, whatever its size")

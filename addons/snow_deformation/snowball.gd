@@ -32,8 +32,10 @@ extends RigidBody3D
 ## A stack holds only until something disturbs it. Anything but another snowball moving into a ball faster than
 ## [member knock_speed] knocks it loose, as does another snowball thrown at it faster than [member thrown_speed], and a ball in a stack that starts to move (the snow ploughed out from under
 ## the bottom one, which drops the floor it stands on) is knocked loose too; either frees the whole stack to roll for
-## [member knocked_time], so it topples as it would. A ball stopped short, its speed falling by [member break_speed] in
-## a step (a landing, a wall), falls apart ([method shatter]): clumps of it scatter and lie in the snow for [member clump_life] seconds, and the
+## [member knocked_time], so it topples as it would. A ball stopped hard, its speed falling by [member break_speed] in
+## a step, falls apart ([method shatter]); nothing dropped from the hands comes near that. One knocked loose breaks
+## from much less, [member knocked_break_speed], while [member knocked_time] lasts, so a head knocked off a snowman
+## breaks where it lands: clumps of it scatter and lie in the snow for [member clump_life] seconds, and the
 ## authority tells every peer, so it breaks everywhere.
 ##
 ## Everything but the growth runs on every peer. The growth runs on the body's multiplayer authority,
@@ -59,11 +61,13 @@ extends RigidBody3D
 @export_range(0.0, 5.0, 0.05, "suffix:m/s") var hold_speed: float = 0.5
 ## Seconds a knocked ball is free to roll before it may hold on another again.
 @export_range(0.0, 5.0, 0.1, "suffix:s") var knocked_time: float = 1.5
-## How suddenly a football-sized ball (11 cm across the radius) has to be stopped to break (its speed falling by
-## this much in one physics step: a landing, a wall, a thrown ball's target). A bigger ball is looser and breaks from
-## proportionally less ([method breaks_at]): a football dropped from the hands survives, a snowman's head knocked
-## off its base does not. Being set moving, shoved or struck never breaks it. 0 never breaks.
-@export_range(0.0, 30.0, 0.1, "suffix:m/s") var break_speed: float = 6.0
+## How suddenly a ball has to be stopped to break: its speed falling by this much in one physics step, which is a
+## fall of more than three metres, or a hard throw at a wall. Dropped from the hands, set down, rolled or tossed, at
+## any size, it stays whole. Being set moving, shoved or struck never breaks it. 0 never breaks.
+@export_range(0.0, 30.0, 0.1, "suffix:m/s") var break_speed: float = 8.0
+## The same for a ball knocked loose ([method knock]), for [member knocked_time] afterwards: a snowman's head knocked
+## off its base breaks where it lands, while one lifted off and set down does not.
+@export_range(0.0, 30.0, 0.1, "suffix:m/s") var knocked_break_speed: float = 3.0
 ## Seconds the clumps of a broken ball lie in the snow before they melt away.
 @export_range(1.0, 120.0, 1.0, "suffix:s") var clump_life: float = 20.0
 ## Packed snow, in kilograms per cubic metre. The mass is this times the ball's volume.
@@ -76,7 +80,6 @@ extends RigidBody3D
 
 const AIR_DENSITY: float = 1.29 ## kg/m3, at sea level and freezing.
 const MAX_SINK: float = 0.25 ## The deepest a ball sinks, as a share of its radius.
-const FOOTBALL_RADIUS: float = 0.11 ## A size 5 football's radius, the size [member break_speed] is given for.
 const SINK_RATE: float = 0.25 ## Metres per second a ball settles in, or comes back up once off the snow.
 
 ## How far the ball has sunk into the snow, in metres.
@@ -134,10 +137,10 @@ static func slowed_by(resistance: float, seconds: float) -> float:
 	return resistance * 9.8 * seconds
 
 
-## The sudden stop that breaks a ball [param of_radius] in radius, [param football] being the one that breaks a
-## football: inversely as the radius.
-static func breaks_at(football: float, of_radius: float) -> float:
-	return football * FOOTBALL_RADIUS / maxf(of_radius, 0.01)
+## The sudden stop that breaks it now: [member knocked_break_speed] while it is knocked loose, [member break_speed]
+## otherwise.
+func breaks_at() -> float:
+	return knocked_break_speed if _now() < _free_until else break_speed
 
 
 ## The mass of a ball [param of_radius] in radius at [param at_density].
@@ -232,7 +235,7 @@ func _integrate_forces(state: PhysicsDirectBodyState3D) -> void:
 	# Stopped short: its speed fell sharply between two steps while touching something. Snow breaks from the stop, not
 	# from being shoved, so a Player walking into a snowman knocks it over without breaking the base.
 	if break_speed > 0.0 and not _was_frozen and state.get_contact_count() > 0 and is_multiplayer_authority() \
-			and _last_velocity.length() - state.linear_velocity.length() >= breaks_at(break_speed, radius):
+			and _last_velocity.length() - state.linear_velocity.length() >= breaks_at():
 		shatter.rpc()
 		return
 	_last_velocity = state.linear_velocity
