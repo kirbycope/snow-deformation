@@ -61,10 +61,10 @@ func test_rolling_ten_metres_makes_a_snowman_base() -> void:
 	var r: float = 0.11
 	for step: int in 1000:
 		r = Snowball.grown(r, 0.01, depth)
-	assert_between(r, 0.28, 0.38, "Ten metres from a football is a ball a snowman can stand on")
+	assert_between(r, 0.5, 0.65, "Ten metres from a football is a ball a snowman can stand on, waist high")
 	for step: int in 2000:
 		r = Snowball.grown(r, 0.01, depth)
-	assert_gt(r, 0.5, "and thirty one taller than a Player's waist")
+	assert_gt(r, 0.9, "and thirty one taller than the Player")
 
 
 func test_pushed_on_the_flat_it_stops_within_a_few_metres() -> void:

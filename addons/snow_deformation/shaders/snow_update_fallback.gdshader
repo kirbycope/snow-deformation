@@ -107,7 +107,8 @@ void fragment() {
 
 		float rt = clamp((d - 1.0) / rim_width, 0.0, 1.0);
 		float rim = (d > 1.0 && d < 1.0 + rim_width) ? 4.0 * rt * (1.0 - rt) : 0.0;
-		float rim_h = depth * params0.w * rim;
+		// No berm where the snow beside the print is already down to the ground; see snow_update.glsl.
+		float rim_h = depth * params0.w * rim * clamp(1.0 - v.r / max(snow_depth, 1e-4), 0.0, 1.0);
 		float core_mask = 1.0 - smoothstep(0.8, 1.0, d);
 
 		v.r = max(v.r, depress);

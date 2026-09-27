@@ -238,9 +238,21 @@ void vertex() {
 	NORMAL = normalize(vec3(VERTEX.y - hr, e, VERTEX.y - hu));
 }
 
+// How thick the snow is at world_xz, before the surface's own edge taper: what is left once the depression is taken
+// out and the berm put on.
+float snow_thickness(vec2 world_xz) {
+	vec4 d = sample_deform(world_xz);
+	return snow_depth - d.r + d.g;
+}
+
 void fragment() {
 	vec2 xz = world_pos.xz;
 	vec4 d = sample_deform(xz);
+	// Snow taken right down to the ground is not drawn at all. Left in, a surface a hair above the ground it was baked
+	// from showed through as white squares (the bake's cells) wherever a snowball had cleared the snow away.
+	if (snow_thickness(xz) < 0.01) {
+		discard;
+	}
 
 	// The whole point of the exercise: rebuild the normal from the height field at a texel's spacing,
 	// so a footprint wall is a crisp shading edge rather than a facet of the grid.

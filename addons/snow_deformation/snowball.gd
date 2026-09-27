@@ -48,8 +48,9 @@ extends RigidBody3D
 		_apply_radius()
 ## Growth stops here; 0, the default, lets it grow as long as it rolls through snow.
 @export_range(0.0, 5.0, 0.01, "or_greater", "suffix:m") var max_radius: float = 0.0
-## How thick a layer of snow the ball picks up as it rolls over it.
-@export_range(0.0, 0.2, 0.001, "suffix:m") var pick_up_depth: float = 0.03
+## How thick a layer of snow the ball picks up as it rolls over it. A hand's depth: ten metres from a football makes a
+## ball a snowman stands on, thirty a ball taller than the Player, the way one grows in Breath of the Wild.
+@export_range(0.0, 0.5, 0.001, "suffix:m") var pick_up_depth: float = 0.1
 ## Snow's rolling resistance: the ball loses this times gravity in speed every second it rolls on snow, so a
 ## push on the flat stops it within a few metres while a hill of 12 degrees or more rolls it away.
 @export_range(0.0, 1.0, 0.01) var rolling_resistance: float = 0.15
@@ -225,10 +226,11 @@ func _physics_process(delta: float) -> void:
 	# Rolling on the snow it leaves its track, as wide as it is: pressed where it touches the floor, down to its own
 	# underside, which is below the floor it rides by as much as it has sunk, and the layer it picked up besides. On a
 	# steep slope the snow straight below its middle is further down than where it touches, so a track pressed there
-	# vanished. It does not dig the floor, or it would sink through its own track.
+	# vanished. It does not dig the floor, or it would sink through its own track. No berm: the snow it ploughs goes
+	# onto the ball, not aside, so a ball run back along its own track does not put snow into it.
 	if _on_snow and rolled > 0.0 and _snow != null and is_instance_valid(_snow):
 		var drawn: Vector3 = global_position - _floor_normal * (_collider_radius() + sink + pick_up_depth) + Vector3.UP * radius
-		_snow.press_segment(drawn - linear_velocity * delta, drawn, radius, 0.35, 0.25, false)
+		_snow.press_segment(drawn - linear_velocity * delta, drawn, radius, 0.0, 0.25, false)
 	if freeze:
 		_was_frozen = true
 		_on_snow = false # held: a ball let go of starts off the floor, so a throw is not held to it

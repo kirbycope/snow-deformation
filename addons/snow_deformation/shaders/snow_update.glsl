@@ -127,7 +127,10 @@ void main() {
 
 		float rt = clamp((d - 1.0) / rim_width, 0.0, 1.0);
 		float rim = (d > 1.0 && d < 1.0 + rim_width) ? 4.0 * rt * (1.0 - rt) : 0.0;
-		float rim_h = depth * s.params0.w * rim;
+		// The berm is the snow shoved out of the print, piled on what lies beside it: where that has already been
+		// taken down to the ground there is nothing to pile it on, so a track run beside or back along another
+		// does not put snow into it.
+		float rim_h = depth * s.params0.w * rim * clamp(1.0 - v.r / max(params.snow_depth, 1e-4), 0.0, 1.0);
 		float core_mask = 1.0 - smoothstep(0.8, 1.0, d);
 
 		// max() rather than +=, so standing in one place does not drill a hole.

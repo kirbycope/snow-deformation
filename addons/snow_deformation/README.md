@@ -224,9 +224,10 @@ HTerrain's collider in the editor as it does in the game.
 `scenes/snowball.tscn` is a `Snowball`, a `RigidBody3D` that starts the size of a football (22 cm across), drawn
 with ambientCG's Snow 010 A mapped triplanar in its own space (`resources/snowball_material.tres`), so the grain
 rolls with it and stays the same size as it grows,
-and grows as it rolls over the snow, the way a Zelda snowball does. It picks up a layer `pick_up_depth` (3 cm)
-thick along its width, so it grows quickly while small and more slowly as it gets big: ten metres of rolling takes a
-football to a ball a snowman can stand on, and it keeps growing for as long as it rolls through snow. There is no
+and grows as it rolls over the snow, the way a Zelda snowball does. It picks up a layer `pick_up_depth` (10 cm, a
+hand's depth) thick along its width, so it grows quickly while small and more slowly as it gets big: ten metres of
+rolling takes a football to a waist-high ball a snowman can stand on, thirty to one taller than the Player, and it
+keeps growing for as long as it rolls through snow. There is no
 size limit unless `max_radius` sets one (0, the default, is none). Held in the hands and pushed through the snow, its underside below the
 surface, it gathers snow the same way by the ground it covers, so a ball can be grown by carrying it low and walking.
 Its mass follows its volume at `density`, but it keeps its speed as it grows rather than sharing its momentum with
@@ -235,7 +236,10 @@ into the blizzard, a football is rolling at 5 m/s and a metre across by the bott
 `rolling_resistance` (0.15) stops one shoved on the flat within a few metres, while a hill of 12 degrees or more
 rolls it away. Wherever it rolls on the snow it leaves its track, as wide as it is and as deep as its underside plus
 the layer it picked up, pressed where it touches the snow: on a steep slope the snow straight below its middle is
-lower than that, and a track pressed there vanished.
+lower than that, and a track pressed there vanished. The track has no berm, since the snow it ploughs goes onto the
+ball rather than aside, so a ball run back along its own track puts no snow into it; and no print's berm rises where
+the snow beside it has already been taken down to the ground. Snow taken right down to the ground is not drawn at
+all, so the ground shows through a cleared patch rather than a white skin a hair above it.
 
 A rolling ball keeps to the snow. Going fast over a crest or a bump it would fly off the slope, growing nothing and
 leaving no track, so while the floor is within `FLOOR_SNAP` (25 cm) below a ball that was rolling on it, the ball is
